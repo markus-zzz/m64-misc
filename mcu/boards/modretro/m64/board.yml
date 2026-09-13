@@ -1,0 +1,6 @@
+board:
+  name: m64
+  full_name: ModRetro M64 (STM32H7A3ZIT6)
+  vendor: modretro
+  socs:
+    - name: stm32h7a3xx

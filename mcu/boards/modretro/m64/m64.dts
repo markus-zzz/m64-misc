@@ -1,0 +1,121 @@
+/*
+ * Copyright (c) 2026 ModRetro
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * ModRetro M64 board devicetree.
+ * SoC: STM32H7A3ZIT6 (LQFP144).
+ *
+ * TODO markers indicate values you MUST verify against your schematic.
+ */
+
+/dts-v1/;
+
+/* Base SoC devicetree for the STM32H7A3xI (2 MB flash) family. */
+#include <st/h7/stm32h7a3Xi.dtsi>
+/* Pin control definitions for the ZI (LQFP144) package. */
+#include <st/h7/stm32h7a3z(g-i)txq-pinctrl.dtsi>
+
+#include <zephyr/dt-bindings/gpio/gpio.h>
+#include <zephyr/dt-bindings/input/input-event-codes.h>
+
+/ {
+	model = "ModRetro M64";
+	compatible = "modretro,m64";
+
+	chosen {
+		zephyr,console = &usart3;
+		zephyr,shell-uart = &usart3;
+		zephyr,sram = &sram0;
+		zephyr,flash = &flash0;
+	};
+
+	/* TODO: adjust to your board's actual LEDs / GPIOs. */
+	leds {
+		compatible = "gpio-leds";
+		status_led: led_0 {
+			/* TODO: set correct GPIO port/pin and active level */
+			gpios = <&gpiob 0 GPIO_ACTIVE_HIGH>;
+			label = "Status LED";
+		};
+	};
+
+	/* TODO: adjust or remove if your board has no user buttons. */
+	buttons {
+		compatible = "gpio-keys";
+		user_button: button_0 {
+			/* TODO: set correct GPIO port/pin and active level */
+			gpios = <&gpioc 13 (GPIO_ACTIVE_HIGH | GPIO_PULL_DOWN)>;
+			label = "User button";
+			zephyr,code = <INPUT_KEY_0>;
+		};
+	};
+
+	aliases {
+		led0 = &status_led;
+		sw0 = &user_button;
+	};
+};
+
+/*
+ * Clock tree.
+ *
+ * TODO: Set clk_hse to match the crystal/oscillator actually fitted on your
+ * board. If your board has NO external crystal and relies on the internal
+ * HSI, delete the &clk_hse block and drive the PLL from HSI instead
+ * (clocks = <&rcc STM32_SRC_HSI ...>; and set clk_hsi status = "okay").
+ */
+&clk_hse {
+	/* TODO: change 24 MHz to your actual HSE crystal frequency */
+	clock-frequency = <DT_FREQ_M(24)>;
+	status = "okay";
+};
+
+&clk_lse {
+	status = "okay";
+};
+
+&clk_hsi48 {
+	status = "okay";
+};
+
+/*
+ * PLL1 configuration targeting ~280 MHz SYSCLK.
+ *
+ * TODO: The div-m value below assumes a 24 MHz HSE (24/12 = 2 MHz PLL input).
+ * Recompute div-m so the PLL input lands in the valid 1-16 MHz range for
+ * YOUR crystal, then adjust mul-n/div-p for your desired SYSCLK.
+ */
+&pll {
+	div-m = <12>;
+	mul-n = <280>;
+	div-p = <2>;
+	div-q = <2>;
+	div-r = <2>;
+	clocks = <&clk_hse>;
+	status = "okay";
+};
+
+&rcc {
+	clocks = <&pll>;
+	clock-frequency = <DT_FREQ_M(280)>;
+	d1cpre = <1>;
+	hpre = <2>;
+	d1ppre = <2>;
+	d2ppre1 = <2>;
+	d2ppre2 = <2>;
+	d3ppre = <2>;
+};
+
+/*
+ * Console UART.
+ *
+ * TODO: Confirm USART3 and the pin assignment match your board. The pinctrl
+ * group names come from stm32h7a3zitxq-pinctrl.dtsi. Common default for
+ * USART3 is PD8 (TX) / PD9 (RX).
+ */
+&usart3 {
+	pinctrl-0 = <&usart3_tx_pd8 &usart3_rx_pd9>;
+	pinctrl-names = "default";
+	current-speed = <115200>;
+	status = "okay";
+};

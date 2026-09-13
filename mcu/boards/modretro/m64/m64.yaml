@@ -1,0 +1,13 @@
+identifier: m64
+name: ModRetro M64 (STM32H7A3ZIT6)
+type: mcu
+arch: arm
+ram: 1024
+flash: 2048
+toolchain:
+  - zephyr
+  - gnuarmemb
+supported:
+  - gpio
+  - serial
+vendor: st

@@ -1,0 +1,47 @@
+# West manifest for the ModRetro M64 (STM32H7A3ZIT6) application.
+#
+# This makes m64-misc/mcu a self-contained west workspace that pulls in
+# upstream Zephyr but only the modules needed to build for STM32H7.
+#
+# Bootstrap (from the repo, with a Python venv + west installed):
+#
+#   cd /home/markus/work/repos/m64-misc
+#   west init -l mcu
+#   west update
+#   west zephyr-export
+#
+# Then build:
+#
+#   export ZEPHYR_BASE=$(west topdir)/zephyr
+#   cd mcu
+#   west build -b m64 .
+#
+# To add a module later, add its name to the name-allowlist below and
+# re-run `west update`.
+
+manifest:
+  remotes:
+    - name: zephyrproject-rtos
+      url-base: https://github.com/zephyrproject-rtos
+
+  projects:
+    - name: zephyr
+      remote: zephyrproject-rtos
+      revision: v4.1.0
+      import:
+        # Only clone the modules required for an STM32H7 Cortex-M7 target.
+        name-allowlist:
+          - cmsis          # ARM CMSIS core (required for Cortex-M)
+          - hal_stm32      # STM32 HAL/LL drivers (required for this SoC)
+          # Uncomment as needed:
+          # - mcuboot      # secure bootloader
+          # - segger       # SEGGER RTT / J-Link
+          # - hal_st       # ST sensor/component HALs
+          # - littlefs     # LittleFS filesystem
+          # - tinycrypt    # crypto primitives
+
+  self:
+    # Path of THIS manifest repo within the workspace. `west init -l mcu`
+    # sets the workspace root to the parent (m64-misc/), so this repo lives
+    # at m64-misc/mcu.
+    path: mcu

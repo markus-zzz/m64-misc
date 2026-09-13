@@ -1,0 +1,5 @@
+# ModRetro M64 board
+# SPDX-License-Identifier: Apache-2.0
+
+config BOARD_M64
+	select SOC_STM32H7A3XX
