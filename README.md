@@ -33,3 +33,12 @@ west build -b m64 .
 zephyr/boards/st/nucleo_h7a3zi_q/nucleo_h7a3zi_q.dts
 modules/hal/stm32/dts/st/h7/stm32h7a3z(g-i)txq-pinctrl.dtsi
 ```
+
+```
+west build -b m64 . -p always
+dfu-util -l
+dfu-util -a 0 -s 0x08000000:leave -D build/zephyr/zephyr.bin
+
+minicom -D /dev/ttyACM0
+```
+Write note about the 'power' USB connector being connected directly to the STM32 FS and must be used for DFU. Also it is used for console since that is simpler.

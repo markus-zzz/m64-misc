@@ -30,14 +30,6 @@
 		zephyr,flash = &flash0;
 	};
 
-	/* External USB HS PHY: Microchip USB3300 over ULPI.
-	 * RESETB is driven by PE13 (active low). */
-	usb_ulpi_phy: usb_ulpi_phy {
-		compatible = "usb-ulpi-phy";
-		reset-gpios = <&gpioe 13 GPIO_ACTIVE_LOW>;
-		#phy-cells = <0>;
-	};
-
 	/* TODO: adjust to your board's actual LEDs / GPIOs. */
 	leds {
 		compatible = "gpio-leds";
@@ -115,38 +107,18 @@
 };
 
 /*
- * USB OTG HS over external ULPI PHY (USB3300).
+ * USB OTG HS running on the internal full-speed PHY (PA11/PA12).
  *
- * The SoC .dtsi defaults usbotg_hs to the internal full-speed PHY
- * (usb-nop-xceiv). This override switches it to the external ULPI PHY for
- * Hi-Speed operation and enables the ULPI interface clock.
+ * This is the same connector used for ROM-bootloader DFU. Full-speed
+ * (12 Mbit/s) is ample for a CDC-ACM console. Inherits the SoC-default
+ * clocks (AHB1 USB1OTGHSEN + HSI48) and the internal usb-nop-xceiv PHY.
  *
- * TODO: Confirm the 12 ULPI pins below match your schematic. These are the
- * only ULPI mappings the LQFP144 package offers; dir/nxt use the PC2/PC3
- * analog-switch "_c" variants.
+ * NOTE: The external USB3300 ULPI HS PHY is on a separate port and is not
+ * used here; switch back to it if Hi-Speed throughput is needed later.
  */
 zephyr_udc0: &usbotg_hs {
-	pinctrl-0 = <&usb_otg_hs_ulpi_ck_pa5
-		     &usb_otg_hs_ulpi_d0_pa3
-		     &usb_otg_hs_ulpi_d1_pb0
-		     &usb_otg_hs_ulpi_d2_pb1
-		     &usb_otg_hs_ulpi_d3_pb10
-		     &usb_otg_hs_ulpi_d4_pb11
-		     &usb_otg_hs_ulpi_d5_pb12
-		     &usb_otg_hs_ulpi_d6_pb13
-		     &usb_otg_hs_ulpi_d7_pb5
-		     &usb_otg_hs_ulpi_stp_pc0
-		     &usb_otg_hs_ulpi_dir_pc2_c
-		     &usb_otg_hs_ulpi_nxt_pc3_c>;
+	pinctrl-0 = <&usb_otg_hs_dm_pa11 &usb_otg_hs_dp_pa12>;
 	pinctrl-names = "default";
-	maximum-speed = "high-speed";
-	/*
-	 * Inherit the SoC-default clocks (AHB1 USB1OTGHSEN + HSI48 kernel clk).
-	 * The ULPI interface clock (USB1OTGHSULPIEN) is enabled by the driver
-	 * itself when a usb-ulpi-phy is present, so it must NOT be overridden
-	 * here. (A hand-copied H747 value previously caused PCD_Init to fail.)
-	 */
-	phys = <&usb_ulpi_phy>;
 	status = "okay";
 
 	cdc_acm_uart0: cdc_acm_uart0 {
