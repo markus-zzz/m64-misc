@@ -23,10 +23,19 @@
 	compatible = "modretro,m64";
 
 	chosen {
-		zephyr,console = &usart3;
-		zephyr,shell-uart = &usart3;
+		/* All output (printk, logs, boot banner, faults) on USART2. */
+		zephyr,console = &usart2;
+		zephyr,shell-uart = &usart2;
 		zephyr,sram = &sram0;
 		zephyr,flash = &flash0;
+	};
+
+	/* External USB HS PHY: Microchip USB3300 over ULPI.
+	 * RESETB is driven by PE13 (active low). */
+	usb_ulpi_phy: usb_ulpi_phy {
+		compatible = "usb-ulpi-phy";
+		reset-gpios = <&gpioe 13 GPIO_ACTIVE_LOW>;
+		#phy-cells = <0>;
 	};
 
 	/* TODO: adjust to your board's actual LEDs / GPIOs. */
@@ -59,32 +68,19 @@
 /*
  * Clock tree.
  *
- * TODO: Set clk_hse to match the crystal/oscillator actually fitted on your
- * board. If your board has NO external crystal and relies on the internal
- * HSI, delete the &clk_hse block and drive the PLL from HSI instead
- * (clocks = <&rcc STM32_SRC_HSI ...>; and set clk_hsi status = "okay").
+ * HSE: 24 MHz passive crystal across PH0-OSC_IN / PH1-OSC_OUT (no bypass).
+ * PLL1: 24 MHz / M=12 = 2 MHz ref; xN=280 -> VCO 560 MHz; /P=2 -> 280 MHz SYSCLK.
  */
 &clk_hse {
-	/* TODO: change 24 MHz to your actual HSE crystal frequency */
 	clock-frequency = <DT_FREQ_M(24)>;
 	status = "okay";
 };
 
-&clk_lse {
-	status = "okay";
-};
-
 &clk_hsi48 {
+	/* 48 MHz RC, useful for USB/RNG. */
 	status = "okay";
 };
 
-/*
- * PLL1 configuration targeting ~280 MHz SYSCLK.
- *
- * TODO: The div-m value below assumes a 24 MHz HSE (24/12 = 2 MHz PLL input).
- * Recompute div-m so the PLL input lands in the valid 1-16 MHz range for
- * YOUR crystal, then adjust mul-n/div-p for your desired SYSCLK.
- */
 &pll {
 	div-m = <12>;
 	mul-n = <280>;
@@ -99,7 +95,7 @@
 	clocks = <&pll>;
 	clock-frequency = <DT_FREQ_M(280)>;
 	d1cpre = <1>;
-	hpre = <2>;
+	hpre = <1>;
 	d1ppre = <2>;
 	d2ppre1 = <2>;
 	d2ppre2 = <2>;
@@ -107,15 +103,53 @@
 };
 
 /*
- * Console UART.
+ * Shell / boot-log / console UART.
  *
- * TODO: Confirm USART3 and the pin assignment match your board. The pinctrl
- * group names come from stm32h7a3zitxq-pinctrl.dtsi. Common default for
- * USART3 is PD8 (TX) / PD9 (RX).
+ * USART2: TX = PA2, RX = PD6 (per M64 schematic).
  */
-&usart3 {
-	pinctrl-0 = <&usart3_tx_pd8 &usart3_rx_pd9>;
+&usart2 {
+	pinctrl-0 = <&usart2_tx_pa2 &usart2_rx_pd6>;
 	pinctrl-names = "default";
 	current-speed = <115200>;
 	status = "okay";
+};
+
+/*
+ * USB OTG HS over external ULPI PHY (USB3300).
+ *
+ * The SoC .dtsi defaults usbotg_hs to the internal full-speed PHY
+ * (usb-nop-xceiv). This override switches it to the external ULPI PHY for
+ * Hi-Speed operation and enables the ULPI interface clock.
+ *
+ * TODO: Confirm the 12 ULPI pins below match your schematic. These are the
+ * only ULPI mappings the LQFP144 package offers; dir/nxt use the PC2/PC3
+ * analog-switch "_c" variants.
+ */
+zephyr_udc0: &usbotg_hs {
+	pinctrl-0 = <&usb_otg_hs_ulpi_ck_pa5
+		     &usb_otg_hs_ulpi_d0_pa3
+		     &usb_otg_hs_ulpi_d1_pb0
+		     &usb_otg_hs_ulpi_d2_pb1
+		     &usb_otg_hs_ulpi_d3_pb10
+		     &usb_otg_hs_ulpi_d4_pb11
+		     &usb_otg_hs_ulpi_d5_pb12
+		     &usb_otg_hs_ulpi_d6_pb13
+		     &usb_otg_hs_ulpi_d7_pb5
+		     &usb_otg_hs_ulpi_stp_pc0
+		     &usb_otg_hs_ulpi_dir_pc2_c
+		     &usb_otg_hs_ulpi_nxt_pc3_c>;
+	pinctrl-names = "default";
+	maximum-speed = "high-speed";
+	/*
+	 * Inherit the SoC-default clocks (AHB1 USB1OTGHSEN + HSI48 kernel clk).
+	 * The ULPI interface clock (USB1OTGHSULPIEN) is enabled by the driver
+	 * itself when a usb-ulpi-phy is present, so it must NOT be overridden
+	 * here. (A hand-copied H747 value previously caused PCD_Init to fail.)
+	 */
+	phys = <&usb_ulpi_phy>;
+	status = "okay";
+
+	cdc_acm_uart0: cdc_acm_uart0 {
+		compatible = "zephyr,cdc-acm-uart";
+	};
 };

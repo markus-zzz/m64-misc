@@ -1,31 +1,57 @@
 /*
  * Copyright (c) 2026 ModRetro
  * SPDX-License-Identifier: Apache-2.0
+ *
+ * Console on USART2 (primary). USB CDC-ACM brought up as a secondary
+ * output over the USB3300 ULPI HS PHY. USART2 keeps working regardless of
+ * whether USB enumerates, so boot/fault visibility is never lost.
  */
 
 #include <zephyr/kernel.h>
-#include <zephyr/drivers/gpio.h>
+#include <zephyr/device.h>
+#include <zephyr/drivers/uart.h>
+#include <zephyr/usb/usb_device.h>
+#include <zephyr/logging/log.h>
 
-/* The devicetree node identifier for the "led0" alias. */
-#define LED0_NODE DT_ALIAS(led0)
+LOG_MODULE_REGISTER(m64, LOG_LEVEL_INF);
 
-static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET(LED0_NODE, gpios);
+/* CDC-ACM UART instance from the devicetree (child of usbotg_hs). */
+static const struct device *const cdc_dev =
+	DEVICE_DT_GET(DT_NODELABEL(cdc_acm_uart0));
+
+static void cdc_write_str(const char *s)
+{
+	if (!device_is_ready(cdc_dev)) {
+		return;
+	}
+	while (*s) {
+		uart_poll_out(cdc_dev, *s++);
+	}
+}
 
 int main(void)
 {
+	uint32_t count = 0;
 	int ret;
 
-	if (!gpio_is_ready_dt(&led)) {
-		return 0;
-	}
+	/* USART2 console is already up via the kernel. */
+	printk("ModRetro M64: USART2 console up (SYSCLK 280 MHz)\n");
 
-	ret = gpio_pin_configure_dt(&led, GPIO_OUTPUT_ACTIVE);
-	if (ret < 0) {
-		return 0;
+	if (!device_is_ready(cdc_dev)) {
+		LOG_ERR("CDC-ACM device not ready");
+	} else {
+		ret = usb_enable(NULL);
+		if (ret != 0) {
+			LOG_ERR("usb_enable failed: %d", ret);
+		} else {
+			LOG_INF("USB enabled; CDC-ACM should enumerate as /dev/ttyACM*");
+		}
 	}
 
 	while (1) {
-		gpio_pin_toggle_dt(&led);
+		printk("alive %u\n", count);          /* USART2 */
+		cdc_write_str("alive over USB CDC-ACM\r\n");  /* USB */
+		count++;
 		k_msleep(1000);
 	}
 
