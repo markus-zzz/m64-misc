@@ -87,6 +87,22 @@
 	status = "okay";
 };
 
+/*
+ * PLL2 provides the 48 MHz SDMMC1 kernel clock (via PLL2R).
+ *
+ * HSE 24 MHz / M=4 = 6 MHz ref; xN=80 -> VCO 480 MHz; /R=10 -> 48 MHz.
+ * (P and Q are unused here but must be valid dividers.)
+ */
+&pll2 {
+	div-m = <4>;
+	mul-n = <80>;
+	div-p = <2>;
+	div-q = <2>;
+	div-r = <10>;
+	clocks = <&clk_hse>;
+	status = "okay";
+};
+
 &rcc {
 	clocks = <&pll>;
 	clock-frequency = <DT_FREQ_M(280)>;
@@ -128,4 +144,32 @@ zephyr_udc0: &usbotg_hs {
 	cdc_acm_uart0: cdc_acm_uart0 {
 		compatible = "zephyr,cdc-acm-uart";
 	};
+};
+
+/*
+ * SD card on SDMMC1 (4-bit bus).
+ *
+ *   CK  = PC12   CMD = PD2
+ *   D0  = PC8    D1  = PC9    D2  = PC10   D3  = PC11
+ *   DET = PE15 (card-detect, active-low: pulled low when a card is present)
+ *
+ * The SDMMC kernel clock is provided by the SoC default; adjust the RCC
+ * domain-clock source here if the card fails to initialise.
+ */
+&sdmmc1 {
+	pinctrl-0 = <&sdmmc1_ck_pc12 &sdmmc1_cmd_pd2
+		     &sdmmc1_d0_pc8 &sdmmc1_d1_pc9
+		     &sdmmc1_d2_pc10 &sdmmc1_d3_pc11>;
+	pinctrl-names = "default";
+	/* AHB3 bus-clock gate + 48 MHz kernel clock from PLL2R (SDMMC_SEL=1). */
+	clocks = <&rcc STM32_CLOCK_BUS_AHB3 0x00010000>,
+		 <&rcc STM32_SRC_PLL2_R SDMMC_SEL(1)>;
+	cd-gpios = <&gpioe 15 GPIO_ACTIVE_LOW>;
+	bus-width = <4>;
+	/* Card clock = SDMMCCLK / (2 * clk-div) = 48 MHz / 8 = 6 MHz.
+	 * The card is unreliable at full speed on this layout; 6 MHz is
+	 * stable. Lower clk-div (toward 0) to go faster if margins allow. */
+	clk-div = <4>;
+	disk-name = "SD";
+	status = "okay";
 };

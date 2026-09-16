@@ -33,6 +33,7 @@ manifest:
         name-allowlist:
           - cmsis          # ARM CMSIS core (required for Cortex-M)
           - hal_stm32      # STM32 HAL/LL drivers (required for this SoC)
+          - fatfs          # ELM-ChaN FatFs (FAT filesystem for the SD card)
           # Uncomment as needed:
           # - mcuboot      # secure bootloader
           # - segger       # SEGGER RTT / J-Link

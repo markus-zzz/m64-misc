@@ -15,6 +15,9 @@
 #include <zephyr/logging/log.h>
 #include <zephyr/shell/shell.h>
 #include <zephyr/version.h>
+#include <zephyr/storage/disk_access.h>
+#include <zephyr/fs/fs.h>
+#include <ff.h>
 #include <stdio.h>
 
 LOG_MODULE_REGISTER(m64, LOG_LEVEL_INF);
@@ -100,15 +103,204 @@ static void print_banner(void)
 	printk("========================================\r\n\r\n");
 }
 
-static int cmd_m64_leds(const struct shell *sh, size_t argc, char **argv)
+/* FatFs mount for the SD card on SDMMC1 (disk-name "SD" from the DTS). */
+static FATFS fat_fs;
+static struct fs_mount_t sd_mnt = {
+	.type = FS_FATFS,
+	.fs_data = &fat_fs,
+	.mnt_point = "/SD:",
+};
+static bool sd_mounted;
+
+/* Bring up the SD disk and mount its FAT filesystem. Returns 0 on success,
+ * a negative errno on failure (e.g. no card inserted). Non-fatal: the app
+ * still boots without a card.
+ */
+static int mount_sd(void)
 {
-    shell_print(sh, "LED on");
-    return 0;
+	int rc;
+
+	if (sd_mounted) {
+		return 0;
+	}
+
+	/* "SD" must match disk-name in the sdmmc node. */
+	rc = disk_access_init("SD");
+	if (rc != 0) {
+		LOG_ERR("SD: disk_access_init failed (%d) - no card?", rc);
+		return -EIO;
+	}
+
+	rc = fs_mount(&sd_mnt);
+	if (rc < 0) {
+		LOG_ERR("SD: fs_mount(%s) failed (%d)", sd_mnt.mnt_point, rc);
+		return rc;
+	}
+
+	sd_mounted = true;
+	LOG_INF("SD mounted at %s", sd_mnt.mnt_point);
+	return 0;
 }
 
+/* Unmount the SD filesystem. Returns 0 on success (or if already
+ * unmounted), a negative errno on failure.
+ */
+static int unmount_sd(void)
+{
+	int rc;
+
+	if (!sd_mounted) {
+		return 0;
+	}
+
+	rc = fs_unmount(&sd_mnt);
+	if (rc < 0) {
+		LOG_ERR("SD: fs_unmount(%s) failed (%d)", sd_mnt.mnt_point, rc);
+		return rc;
+	}
+
+	sd_mounted = false;
+	LOG_INF("SD unmounted from %s", sd_mnt.mnt_point);
+	return 0;
+}
+
+static int cmd_m64_leds(const struct shell *sh, size_t argc, char **argv)
+{
+	ARG_UNUSED(argc);
+	ARG_UNUSED(argv);
+
+	shell_print(sh, "LED on");
+	return 0;
+}
+
+static int cmd_m64_sd_mount(const struct shell *sh, size_t argc, char **argv)
+{
+	ARG_UNUSED(argc);
+	ARG_UNUSED(argv);
+
+	int rc = mount_sd();
+
+	if (rc != 0) {
+		shell_error(sh, "mount failed (%d)", rc);
+		return rc;
+	}
+	shell_print(sh, "mounted at %s", sd_mnt.mnt_point);
+	return 0;
+}
+
+static int cmd_m64_sd_unmount(const struct shell *sh, size_t argc, char **argv)
+{
+	ARG_UNUSED(argc);
+	ARG_UNUSED(argv);
+
+	int rc = unmount_sd();
+
+	if (rc != 0) {
+		shell_error(sh, "unmount failed (%d)", rc);
+		return rc;
+	}
+	shell_print(sh, "unmounted");
+	return 0;
+}
+
+/* List directory contents. Usage: m64 sd ls [path]
+ * Path defaults to the mount point if omitted.
+ */
+static int cmd_m64_sd_ls(const struct shell *sh, size_t argc, char **argv)
+{
+	const char *path = (argc > 1) ? argv[1] : sd_mnt.mnt_point;
+	struct fs_dir_t dir;
+	int rc;
+
+	if (!sd_mounted) {
+		shell_error(sh, "SD not mounted (run 'm64 sd mount')");
+		return -ENODEV;
+	}
+
+	fs_dir_t_init(&dir);
+	rc = fs_opendir(&dir, path);
+	if (rc < 0) {
+		shell_error(sh, "opendir(%s) failed (%d)", path, rc);
+		return rc;
+	}
+
+	while (1) {
+		struct fs_dirent entry;
+
+		rc = fs_readdir(&dir, &entry);
+		if (rc < 0) {
+			shell_error(sh, "readdir failed (%d)", rc);
+			break;
+		}
+		if (entry.name[0] == '\0') {
+			break;	/* end of directory */
+		}
+
+		if (entry.type == FS_DIR_ENTRY_DIR) {
+			shell_print(sh, "  <DIR>  %s", entry.name);
+		} else {
+			shell_print(sh, "  %6zu %s", entry.size, entry.name);
+		}
+	}
+
+	fs_closedir(&dir);
+	return (rc < 0) ? rc : 0;
+}
+
+/* Print the contents of a file. Usage: m64 sd cat <path> */
+static int cmd_m64_sd_cat(const struct shell *sh, size_t argc, char **argv)
+{
+	const char *path = argv[1];
+	struct fs_file_t file;
+	char buf[128];
+	ssize_t n;
+	int rc;
+
+	if (!sd_mounted) {
+		shell_error(sh, "SD not mounted (run 'm64 sd mount')");
+		return -ENODEV;
+	}
+
+	fs_file_t_init(&file);
+	rc = fs_open(&file, path, FS_O_READ);
+	if (rc < 0) {
+		shell_error(sh, "open(%s) failed (%d)", path, rc);
+		return rc;
+	}
+
+	/* Stream the file to the shell in chunks. shell_fprintf with a
+	 * bounded %.*s avoids assuming NUL-terminated content. */
+	while ((n = fs_read(&file, buf, sizeof(buf))) > 0) {
+		shell_fprintf(sh, SHELL_NORMAL, "%.*s", (int)n, buf);
+	}
+
+	if (n < 0) {
+		shell_error(sh, "read failed (%d)", (int)n);
+		rc = (int)n;
+	} else {
+		/* Ensure the prompt starts on a fresh line. */
+		shell_fprintf(sh, SHELL_NORMAL, "\n");
+		rc = 0;
+	}
+
+	fs_close(&file);
+	return rc;
+}
+
+SHELL_STATIC_SUBCMD_SET_CREATE(m64_sd_cmds,
+	SHELL_CMD(mount,   NULL, "Mount the SD card.",       cmd_m64_sd_mount),
+	SHELL_CMD(unmount, NULL, "Unmount the SD card.",     cmd_m64_sd_unmount),
+	SHELL_CMD_ARG(ls,  NULL, "List a directory: ls [path]",
+		      cmd_m64_sd_ls, 1, 1),
+	SHELL_CMD_ARG(cat, NULL, "Print a file: cat <path>",
+		      cmd_m64_sd_cat, 2, 0),
+	SHELL_SUBCMD_SET_END
+);
+
 SHELL_STATIC_SUBCMD_SET_CREATE(m64_cmds,
-    SHELL_CMD(leds,  NULL, "Manipulate LEDs.",  cmd_m64_leds),
-    SHELL_SUBCMD_SET_END
+	SHELL_CMD(leds, NULL,          "Manipulate LEDs.", cmd_m64_leds),
+	SHELL_CMD(sd,   &m64_sd_cmds,  "SD card control.", NULL),
+	SHELL_SUBCMD_SET_END
 );
 
 SHELL_CMD_REGISTER(m64, &m64_cmds, "M64 specific commands.", NULL);
@@ -129,6 +321,9 @@ int main(void)
 		LOG_INF("DTR wait timed out; continuing headless");
 	}
 	print_banner();
+
+	/* Mount the SD card (non-fatal if absent). */
+	(void)mount_sd();
 
 	/* Nothing else to do here: the interactive shell runs in its own
 	 * thread on the USB CDC-ACM console. */
