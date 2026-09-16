@@ -32,6 +32,9 @@
 		zephyr,shell-uart = &cdc_acm_uart0;
 		zephyr,sram = &sram0;
 		zephyr,flash = &flash0;
+		/* Place code tagged __itcm_section in zero-wait-state ITCM
+		 * (used for the cycle-tight WS2812 bit-bang). */
+		zephyr,itcm = &itcm;
 	};
 
 	/*
