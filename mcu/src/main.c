@@ -13,6 +13,7 @@
 #include <zephyr/drivers/uart.h>
 #include <zephyr/drivers/hwinfo.h>
 #include <zephyr/logging/log.h>
+#include <zephyr/shell/shell.h>
 #include <zephyr/version.h>
 #include <stdio.h>
 
@@ -98,6 +99,19 @@ static void print_banner(void)
 	print_device_id();
 	printk("========================================\r\n\r\n");
 }
+
+static int cmd_m64_leds(const struct shell *sh, size_t argc, char **argv)
+{
+    shell_print(sh, "LED on");
+    return 0;
+}
+
+SHELL_STATIC_SUBCMD_SET_CREATE(m64_cmds,
+    SHELL_CMD(leds,  NULL, "Manipulate LEDs.",  cmd_m64_leds),
+    SHELL_SUBCMD_SET_END
+);
+
+SHELL_CMD_REGISTER(m64, &m64_cmds, "M64 specific commands.", NULL);
 
 int main(void)
 {
