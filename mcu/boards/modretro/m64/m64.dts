@@ -23,9 +23,13 @@
 	compatible = "modretro,m64";
 
 	chosen {
-		/* All output (printk, logs, boot banner, faults) on USART2. */
-		zephyr,console = &usart2;
-		zephyr,shell-uart = &usart2;
+		/*
+		 * Primary console (printk, logs, boot banner, faults) on the
+		 * USB CDC-ACM port. USART2 remains available as a wired backup
+		 * but is no longer the chosen console.
+		 */
+		zephyr,console = &cdc_acm_uart0;
+		zephyr,shell-uart = &cdc_acm_uart0;
 		zephyr,sram = &sram0;
 		zephyr,flash = &flash0;
 	};
