@@ -11,6 +11,7 @@
 #include <zephyr/kernel.h>
 #include <zephyr/device.h>
 #include <zephyr/drivers/uart.h>
+#include <zephyr/drivers/gpio.h>
 #include <zephyr/drivers/hwinfo.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/shell/shell.h>
@@ -25,6 +26,19 @@ LOG_MODULE_REGISTER(m64, LOG_LEVEL_INF);
 /* CDC-ACM device backing the console; used here to poll DTR at boot. */
 static const struct device *const cdc_dev =
 	DEVICE_DT_GET(DT_CHOSEN(zephyr_console));
+
+/* Board GPIO: VSYS LED enable (PG15, active-high). */
+static const struct gpio_dt_spec vsys_led_on =
+	GPIO_DT_SPEC_GET(DT_NODELABEL(vsys_led_on), gpios);
+
+static const struct gpio_dt_spec ctrl_led_data_0 =
+	GPIO_DT_SPEC_GET(DT_NODELABEL(ctrl_led_data_0), gpios);
+static const struct gpio_dt_spec ctrl_led_data_1 =
+	GPIO_DT_SPEC_GET(DT_NODELABEL(ctrl_led_data_1), gpios);
+static const struct gpio_dt_spec ctrl_led_data_2 =
+	GPIO_DT_SPEC_GET(DT_NODELABEL(ctrl_led_data_2), gpios);
+static const struct gpio_dt_spec ctrl_led_data_3 =
+	GPIO_DT_SPEC_GET(DT_NODELABEL(ctrl_led_data_3), gpios);
 
 /* Wait until the host opens the CDC-ACM port (asserts DTR), up to
  * timeout_ms. Returns true if DTR was seen, false on timeout so a headless
@@ -312,6 +326,13 @@ int main(void)
 	 * (CONFIG_USB_DEVICE_INITIALIZE_AT_BOOT), and the CDC-ACM port is the
 	 * chosen console, so printk()/LOG output goes over USB directly.
 	 */
+
+	/* Enable various power domains */
+	(void)gpio_pin_configure_dt(&vsys_led_on, GPIO_OUTPUT_ACTIVE);
+	(void)gpio_pin_configure_dt(&ctrl_led_data_0,  GPIO_OUTPUT_ACTIVE);
+	(void)gpio_pin_configure_dt(&ctrl_led_data_1,  GPIO_OUTPUT_INACTIVE);
+	(void)gpio_pin_configure_dt(&ctrl_led_data_2,  GPIO_OUTPUT_ACTIVE);
+	(void)gpio_pin_configure_dt(&ctrl_led_data_3,  GPIO_OUTPUT_INACTIVE);
 
 	/* Wait (up to 10 s) for the host to open the port so the banner is
 	 * not lost, but still boot headless if nobody connects. */

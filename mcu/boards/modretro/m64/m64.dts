@@ -34,30 +34,32 @@
 		zephyr,flash = &flash0;
 	};
 
-	/* TODO: adjust to your board's actual LEDs / GPIOs. */
-	leds {
-		compatible = "gpio-leds";
-		status_led: led_0 {
-			/* TODO: set correct GPIO port/pin and active level */
-			gpios = <&gpiob 0 GPIO_ACTIVE_HIGH>;
-			label = "Status LED";
-		};
-	};
-
-	/* TODO: adjust or remove if your board has no user buttons. */
-	buttons {
+	/*
+	 * Board-specific general-purpose GPIOs (Option B: custom node,
+	 * driven directly via GPIO_DT_SPEC_GET(DT_NODELABEL(...), gpios)).
+	 */
+	m64_gpios {
 		compatible = "gpio-keys";
-		user_button: button_0 {
-			/* TODO: set correct GPIO port/pin and active level */
-			gpios = <&gpioc 13 (GPIO_ACTIVE_HIGH | GPIO_PULL_DOWN)>;
-			label = "User button";
-			zephyr,code = <INPUT_KEY_0>;
+		vsys_led_on: vsys_led_on {
+			gpios = <&gpiog 15 GPIO_ACTIVE_HIGH>;
+			label = "VSYS LED enable";
 		};
-	};
-
-	aliases {
-		led0 = &status_led;
-		sw0 = &user_button;
+		ctrl_led_data_0: ctrl_led_data_0 {
+			gpios = <&gpioa 0 GPIO_ACTIVE_HIGH>;
+			label = "LED Ctrl 0";
+		};
+		ctrl_led_data_1: ctrl_led_data_1 {
+			gpios = <&gpiob 3 GPIO_ACTIVE_HIGH>;
+			label = "LED Ctrl 1";
+		};
+		ctrl_led_data_2: ctrl_led_data_2 {
+			gpios = <&gpiob 4 GPIO_ACTIVE_HIGH>;
+			label = "LED Ctrl 2";
+		};
+		ctrl_led_data_3: ctrl_led_data_3 {
+			gpios = <&gpiod 15 GPIO_ACTIVE_HIGH>;
+			label = "LED Ctrl 3";
+		};
 	};
 };
 
