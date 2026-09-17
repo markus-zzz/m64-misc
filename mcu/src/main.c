@@ -34,6 +34,8 @@ static const struct device *const cdc_dev =
 /* Board GPIO: VSYS LED enable (PG15, active-high). */
 static const struct gpio_dt_spec vsys_led_on =
 	GPIO_DT_SPEC_GET(DT_NODELABEL(vsys_led_on), gpios);
+static const struct gpio_dt_spec fpga_pwr_en =
+	GPIO_DT_SPEC_GET(DT_NODELABEL(fpga_pwr_en), gpios);
 
 static const struct gpio_dt_spec ctrl_led_data_0 =
 	GPIO_DT_SPEC_GET(DT_NODELABEL(ctrl_led_data_0), gpios);
@@ -43,6 +45,15 @@ static const struct gpio_dt_spec ctrl_led_data_2 =
 	GPIO_DT_SPEC_GET(DT_NODELABEL(ctrl_led_data_2), gpios);
 static const struct gpio_dt_spec ctrl_led_data_3 =
 	GPIO_DT_SPEC_GET(DT_NODELABEL(ctrl_led_data_3), gpios);
+
+static const struct gpio_dt_spec fpga_ss_boot_ctrl =
+	GPIO_DT_SPEC_GET(DT_NODELABEL(fpga_ss_boot_ctrl), gpios);
+static const struct gpio_dt_spec fpga_init_b =
+	GPIO_DT_SPEC_GET(DT_NODELABEL(fpga_init_b), gpios);
+static const struct gpio_dt_spec fpga_program_b =
+	GPIO_DT_SPEC_GET(DT_NODELABEL(fpga_program_b), gpios);
+static const struct gpio_dt_spec fpga_done =
+	GPIO_DT_SPEC_GET(DT_NODELABEL(fpga_done), gpios);
 
 /*
  * Bit-banged WS2812B driver on ctrl_led_data_0 (PA0).
@@ -488,8 +499,16 @@ int main(void)
 	 * chosen console, so printk()/LOG output goes over USB directly.
 	 */
 
+  /* Set FPGA configuration mode to 'Slave Serial' (M[2:0] = 3'b111) */
+	(void)gpio_pin_configure_dt(&fpga_ss_boot_ctrl, GPIO_OUTPUT_ACTIVE);
+  /* Set FPGA programming interface to inactive state */
+	(void)gpio_pin_configure_dt(&fpga_init_b, GPIO_OUTPUT_INACTIVE);
+	(void)gpio_pin_configure_dt(&fpga_program_b, GPIO_OUTPUT_INACTIVE);
+	(void)gpio_pin_configure_dt(&fpga_done, GPIO_INPUT);
+
 	/* Enable various power domains */
 	(void)gpio_pin_configure_dt(&vsys_led_on, GPIO_OUTPUT_ACTIVE);
+	(void)gpio_pin_configure_dt(&fpga_pwr_en, GPIO_OUTPUT_ACTIVE);
 	/* ctrl_led_data_0 (PA0) is the WS2812B data line: configure as a
 	 * push-pull output (this also enables the port clock) and idle low,
 	 * then shift in a color via the bit-bang routine below. */

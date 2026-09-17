@@ -43,10 +43,17 @@
 	 */
 	m64_gpios {
 		compatible = "gpio-keys";
+		// Power domain enables
 		vsys_led_on: vsys_led_on {
 			gpios = <&gpiog 15 GPIO_ACTIVE_HIGH>;
-			label = "VSYS LED enable";
+			label = "VSYS LED Enable";
 		};
+		fpga_pwr_en: fpga_pwr_en {
+			gpios = <&gpioc 5 GPIO_ACTIVE_HIGH>;
+			label = "FPGA Power Enable (PC5)";
+		};
+
+		// LEDs
 		ctrl_led_data_0: ctrl_led_data_0 {
 			gpios = <&gpioa 0 GPIO_ACTIVE_HIGH>;
 			label = "LED Ctrl 0";
@@ -62,6 +69,24 @@
 		ctrl_led_data_3: ctrl_led_data_3 {
 			gpios = <&gpiod 15 GPIO_ACTIVE_HIGH>;
 			label = "LED Ctrl 3";
+		};
+
+		// FPGA interface
+		fpga_ss_boot_ctrl: fpga_ss_boot_ctrl {
+			gpios = <&gpiog 13 GPIO_ACTIVE_HIGH>;
+			label = "FPGA SubSystem Boot Control (PG13)";
+		};
+		fpga_init_b: fpga_init_b {
+			gpios = <&gpioc 13 GPIO_ACTIVE_HIGH>;
+			label = "FPGA INIT_B (PC13)";
+		};
+		fpga_program_b: fpga_program_b {
+			gpios = <&gpioe 6 GPIO_ACTIVE_HIGH>;
+			label = "FPGA PROGRAM_B (PE6)";
+		};
+		fpga_done: fpga_done {
+			gpios = <&gpioe 5 GPIO_ACTIVE_HIGH>;
+			label = "FPGA DONE (PE5)";
 		};
 	};
 };
