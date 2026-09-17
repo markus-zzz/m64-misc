@@ -502,8 +502,8 @@ int main(void)
   /* Set FPGA configuration mode to 'Slave Serial' (M[2:0] = 3'b111) */
 	(void)gpio_pin_configure_dt(&fpga_ss_boot_ctrl, GPIO_OUTPUT_ACTIVE);
   /* Set FPGA programming interface to inactive state */
-	(void)gpio_pin_configure_dt(&fpga_init_b, GPIO_OUTPUT_INACTIVE);
-	(void)gpio_pin_configure_dt(&fpga_program_b, GPIO_OUTPUT_INACTIVE);
+	(void)gpio_pin_configure_dt(&fpga_program_b, GPIO_OUTPUT_HIGH | GPIO_OPEN_DRAIN);
+	(void)gpio_pin_configure_dt(&fpga_init_b, GPIO_INPUT);
 	(void)gpio_pin_configure_dt(&fpga_done, GPIO_INPUT);
 
 	/* Enable various power domains */

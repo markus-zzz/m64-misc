@@ -42,3 +42,8 @@ dfu-util -a 0 -s 0x08000000:leave -D build/zephyr/zephyr.bin
 minicom -D /dev/ttyACM0
 ```
 Write note about the 'power' USB connector being connected directly to the STM32 FS and must be used for DFU. Also it is used for console since that is simpler.
+
+# FPGA
+FPGA_SYS_CLK - IO_L12P_T1U_N10_GC_64
+XCAU15P-2FFVB676E
+
