@@ -12,8 +12,13 @@
 
 /* Base SoC devicetree for the STM32H7A3xI (2 MB flash) family. */
 #include <st/h7/stm32h7a3Xi.dtsi>
-/* Pin control definitions for the ZI (LQFP144) package. */
-#include <st/h7/stm32h7a3z(g-i)txq-pinctrl.dtsi>
+/* Pin control definitions for the ZI (LQFP144) package.
+ * Non-Q (without-SMPS) variant: this is the STM32H7A3ZIT6 pinout that exposes
+ * PF0-PF15 and PG0-PG15 (the SMPS supply pins are reassigned as GPIO). The
+ * previous 'txq' (with-SMPS) include lacked PF0-PF5 and did not match the
+ * actual silicon.
+ */
+#include <st/h7/stm32h7a3z(g-i)tx-pinctrl.dtsi>
 
 #include <zephyr/dt-bindings/gpio/gpio.h>
 #include <zephyr/dt-bindings/input/input-event-codes.h>
@@ -74,19 +79,44 @@
 		// FPGA interface
 		fpga_ss_boot_ctrl: fpga_ss_boot_ctrl {
 			gpios = <&gpiog 13 GPIO_ACTIVE_HIGH>;
-			label = "FPGA SubSystem Boot Control (PG13)";
+			label = "FPGA mode strap ctrl (PG13, high=M1/M2 driven to 1V8 => M[2:0]=111)";
 		};
 		fpga_init_b: fpga_init_b {
 			gpios = <&gpioc 13 GPIO_ACTIVE_HIGH>;
 			label = "FPGA INIT_B (PC13)";
 		};
 		fpga_program_b: fpga_program_b {
-			gpios = <&gpioe 6 GPIO_ACTIVE_HIGH>;
-			label = "FPGA PROGRAM_B (PE6)";
+			gpios = <&gpioe 6 GPIO_ACTIVE_LOW>;
+			label = "FPGA PROGRAM_B (PE6, active-low)";
 		};
 		fpga_done: fpga_done {
 			gpios = <&gpioe 5 GPIO_ACTIVE_HIGH>;
 			label = "FPGA DONE (PE5)";
+		};
+
+		/*
+		 * Slave-Serial configuration clock/data, bit-banged as plain
+		 * GPIOs (temporary bring-up). CCLK=PF4, DIN=PF0. Bitstream is
+		 * shifted MSB-first, one bit per CCLK rising edge.
+		 */
+		fpga_cclk: fpga_cclk {
+			gpios = <&gpiof 4 GPIO_ACTIVE_HIGH>;
+			label = "FPGA CCLK (PF4)";
+		};
+		fpga_din: fpga_din {
+			gpios = <&gpiof 0 GPIO_ACTIVE_HIGH>;
+			label = "FPGA DIN (PF0)";
+		};
+
+		/*
+		 * Config flash chip-select (PG12 = OCTOSPI2 NCS). The bitstream
+		 * flash shares the CCLK/DIN bus with the FPGA's Slave-Serial
+		 * input, so it must be DESELECTED (CS# high) during FPGA config
+		 * to keep it off the shared IO0/DIN line. Active-low.
+		 */
+		flash_cs: flash_cs {
+			gpios = <&gpiog 12 GPIO_ACTIVE_LOW>;
+			label = "Config flash CS# (PG12, active-low)";
 		};
 	};
 };

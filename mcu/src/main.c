@@ -19,6 +19,7 @@
 #include <zephyr/linker/section_tags.h>
 #include <zephyr/storage/disk_access.h>
 #include <zephyr/fs/fs.h>
+#include <zephyr/sys/crc.h>
 #include <ff.h>
 #include <soc.h>
 #include <stdio.h>
@@ -54,6 +55,178 @@ static const struct gpio_dt_spec fpga_program_b =
 	GPIO_DT_SPEC_GET(DT_NODELABEL(fpga_program_b), gpios);
 static const struct gpio_dt_spec fpga_done =
 	GPIO_DT_SPEC_GET(DT_NODELABEL(fpga_done), gpios);
+static const struct gpio_dt_spec flash_cs =
+	GPIO_DT_SPEC_GET(DT_NODELABEL(flash_cs), gpios);
+
+/*
+ * ---------------------------------------------------------------------------
+ * FPGA Slave-Serial configuration - BIT-BANG (temporary bring-up).
+ *
+ * CCLK = PF4, DIN = PF0, driven as plain GPIOs. This is a simple, robust
+ * proof-of-life to confirm the FPGA configures: read a chunk from SD into
+ * RAM, then clock it out bit-by-bit (MSB-first, data set up before the
+ * rising CCLK edge, per Xilinx Slave-Serial). SD and GPIO never contend
+ * because each SD read completes before we clock its bytes out.
+ *
+ * Not fast, but FPGA configuration is a one-time boot operation. Speed can
+ * be revisited later (e.g. OCTOSPI or SPI on suitable pins).
+ * ---------------------------------------------------------------------------
+ */
+#define FPGA_CCLK_PORT GPIOF
+#define FPGA_CCLK_PIN  4U
+#define FPGA_DIN_PORT  GPIOF
+#define FPGA_DIN_PIN   0U
+
+/* BSRR set/reset masks (atomic single-store level changes). */
+#define FPGA_CCLK_SET  (1U << FPGA_CCLK_PIN)
+#define FPGA_CCLK_CLR  (1U << (FPGA_CCLK_PIN + 16))
+#define FPGA_DIN_SET   (1U << FPGA_DIN_PIN)
+#define FPGA_DIN_CLR   (1U << (FPGA_DIN_PIN + 16))
+
+static const struct gpio_dt_spec fpga_cclk =
+	GPIO_DT_SPEC_GET(DT_NODELABEL(fpga_cclk), gpios);
+static const struct gpio_dt_spec fpga_din =
+	GPIO_DT_SPEC_GET(DT_NODELABEL(fpga_din), gpios);
+
+/*
+ * Bit-bang clock phase selector (experiment knob).
+ *   0 = data set up BEFORE the rising CCLK edge, FPGA samples on rising edge
+ *       (classic SPI mode 0 / standard Slave-Serial).
+ *   1 = data set up BEFORE the falling CCLK edge, i.e. clock idles high and
+ *       we present data then drop CCLK (sample on falling edge).
+ * Selectable at runtime via `m64 fpga <path> <phase>` for bring-up testing.
+ */
+static int fpga_clk_phase;
+
+/* Clock out one byte MSB-first, honoring fpga_clk_phase. */
+static inline void fpga_bitbang_byte(uint8_t b)
+{
+	for (int i = 7; i >= 0; i--) {
+		uint32_t din = (b & (1U << i)) ? FPGA_DIN_SET : FPGA_DIN_CLR;
+
+		if (fpga_clk_phase == 0) {
+			/* Idle low; sample on rising edge. */
+			FPGA_DIN_PORT->BSRR = din;
+			k_busy_wait(1);                     /* DIN setup */
+			FPGA_CCLK_PORT->BSRR = FPGA_CCLK_SET;   /* rising: latch */
+			k_busy_wait(1);
+			FPGA_CCLK_PORT->BSRR = FPGA_CCLK_CLR;   /* return low */
+			k_busy_wait(1);
+		} else {
+			/* Idle high; sample on falling edge. */
+			FPGA_DIN_PORT->BSRR = din;
+			k_busy_wait(1);                     /* DIN setup */
+			FPGA_CCLK_PORT->BSRR = FPGA_CCLK_CLR;   /* falling: latch */
+			k_busy_wait(1);
+			FPGA_CCLK_PORT->BSRR = FPGA_CCLK_SET;   /* return high */
+			k_busy_wait(1);
+		}
+	}
+}
+
+/* Program the FPGA in Slave-Serial mode (bit-banged) from a raw .bin on SD.
+ *
+ * Expects a raw .bin (write_bitstream -bin_file): no header to skip.
+ * Returns 0 on success, negative errno otherwise.
+ */
+static int fpga_program_path(const char *binpath)
+{
+	struct fs_file_t file;
+	/* Large buffer so each SD read is a fast contiguous burst; the slow
+	 * bit-bang then runs with the SD idle. This avoids interleaving many
+	 * small reads with the slow clock-out, which was overrunning the
+	 * marginal SD link (SDMMC_ERROR_RX_OVERRUN). 64 KiB fits in main RAM. */
+	static uint8_t cfg_buf[64 * 1024];
+	ssize_t n;
+	int rc;
+
+	fs_file_t_init(&file);
+	rc = fs_open(&file, binpath, FS_O_READ);
+	if (rc < 0) {
+		LOG_ERR("open(%s) failed (%d)", binpath, rc);
+		return rc;
+	}
+
+	/* Idle CCLK to the phase's resting level before starting. */
+	FPGA_CCLK_PORT->BSRR = (fpga_clk_phase == 0) ?
+			       FPGA_CCLK_CLR : FPGA_CCLK_SET;
+
+	/* Ensure the config flash is deselected so it can't drive the shared
+	 * IO0/DIN line while we clock the bitstream into the FPGA. */
+	(void)gpio_pin_set_dt(&flash_cs, 0);   /* 0 = inactive = CS# high */
+
+	/* Pulse PROGRAM_B low to start a fresh configuration. */
+	(void)gpio_pin_set_dt(&fpga_program_b, 1);   /* assert (active low) */
+	k_msleep(1);
+	LOG_INF("INIT_B during clear (expect 0): %d",
+		gpio_pin_get_dt(&fpga_init_b));
+	(void)gpio_pin_set_dt(&fpga_program_b, 0);   /* release: drive high */
+
+	/* Wait for INIT_B high = config memory cleared, ready for data. */
+	while (gpio_pin_get_dt(&fpga_init_b) == 0) {
+		k_msleep(1);
+	}
+	LOG_INF("FPGA ready for bitstream (bit-bang)");
+
+	/* Read a big block, then clock it out; repeat. SD and GPIO never
+	 * overlap, and each SD session is a fast burst.
+	 *
+	 * While clocking, watch INIT_B: in Slave-Serial a listening FPGA pulls
+	 * INIT_B low if it hits a CRC error, so a dip proves our data is
+	 * actually reaching the config engine. Never dipping across the whole
+	 * image means the FPGA isn't seeing CCLK/DIN as config input at all.
+	 */
+	bool init_b_dipped = false;
+	size_t total_clocked = 0;
+
+	while ((n = fs_read(&file, cfg_buf, sizeof(cfg_buf))) > 0) {
+		for (ssize_t i = 0; i < n; i++) {
+			fpga_bitbang_byte(cfg_buf[i]);
+
+			/* Cheap periodic check (every 256 bytes). */
+			if (((i & 0xFF) == 0) && !init_b_dipped &&
+			    gpio_pin_get_dt(&fpga_init_b) == 0) {
+				init_b_dipped = true;
+				LOG_WRN("INIT_B went LOW at ~%zu bytes "
+					"(FPGA flagged a config/CRC error - "
+					"data IS reaching it)",
+					total_clocked + (size_t)i);
+			}
+		}
+		total_clocked += (size_t)n;
+	}
+	fs_close(&file);
+
+	LOG_INF("clocked %zu bytes; INIT_B dipped during load: %s",
+		total_clocked, init_b_dipped ? "YES" : "NO");
+
+	if (n < 0) {
+		LOG_ERR("read failed (%d)", (int)n);
+		return (int)n;
+	}
+
+	/*
+	 * Startup: after the last data byte the FPGA needs extra CCLK cycles
+	 * to complete its startup sequence and release DONE. DONE is asserted
+	 * partway through startup, so clock in bursts and poll DONE rather
+	 * than sending a fixed number of clocks. Bail out after a generous
+	 * bound (~ a few thousand extra clocks).
+	 */
+	for (int burst = 0; burst < 256; burst++) {
+		for (int i = 0; i < 8; i++) {
+			fpga_bitbang_byte(0xFF);   /* 64 clocks per burst */
+		}
+		if (gpio_pin_get_dt(&fpga_done) == 1) {
+			LOG_INF("FPGA configured: DONE high after %d startup clocks",
+				(burst + 1) * 64);
+			return 0;
+		}
+	}
+
+	LOG_ERR("FPGA config failed: DONE low (INIT_B=%d)",
+		gpio_pin_get_dt(&fpga_init_b));
+	return -EIO;
+}
 
 /*
  * Bit-banged WS2812B driver on ctrl_led_data_0 (PA0).
@@ -481,11 +654,194 @@ static int cmd_m64_ws2812(const struct shell *sh, size_t argc, char **argv)
 	return 0;
 }
 
+/* m64 fpgatoggle <pin> : slowly toggle CCLK (pin=clk) or DIN (pin=din) so
+ * the pin can be probed at the FPGA to confirm the MCU is driving it.
+ * Toggles ~2 Hz for 20 cycles (10 s). Ctrl-C not needed; it returns after.
+ */
+static int cmd_m64_fpgatoggle(const struct shell *sh, size_t argc, char **argv)
+{
+	ARG_UNUSED(argc);
+	bool do_clk = (strcmp(argv[1], "clk") == 0);
+	bool do_din = (strcmp(argv[1], "din") == 0);
+
+	if (!do_clk && !do_din) {
+		shell_error(sh, "usage: m64 fpgatoggle <clk|din>");
+		return -EINVAL;
+	}
+
+	shell_print(sh, "toggling %s ~2 Hz for 10 s; probe it at the FPGA...",
+		    do_clk ? "CCLK(PF4)" : "DIN(PF0)");
+
+	for (int i = 0; i < 20; i++) {
+		if (do_clk) {
+			FPGA_CCLK_PORT->BSRR = (i & 1) ? FPGA_CCLK_SET
+						       : FPGA_CCLK_CLR;
+		} else {
+			FPGA_DIN_PORT->BSRR = (i & 1) ? FPGA_DIN_SET
+						      : FPGA_DIN_CLR;
+		}
+		k_msleep(250);
+	}
+	/* Leave both idle low. */
+	FPGA_CCLK_PORT->BSRR = FPGA_CCLK_CLR;
+	FPGA_DIN_PORT->BSRR = FPGA_DIN_CLR;
+	shell_print(sh, "done");
+	return 0;
+}
+
+/* m64 fpgapwr on|off : control the FPGA power-enable (for A/B testing). */
+static int cmd_m64_fpgapwr(const struct shell *sh, size_t argc, char **argv)
+{
+	ARG_UNUSED(argc);
+
+	if (strcmp(argv[1], "on") == 0) {
+		(void)gpio_pin_set_dt(&fpga_pwr_en, 1);
+		shell_print(sh, "FPGA power ENABLED (pwr_en=1)");
+	} else if (strcmp(argv[1], "off") == 0) {
+		(void)gpio_pin_set_dt(&fpga_pwr_en, 0);
+		shell_print(sh, "FPGA power DISABLED (pwr_en=0)");
+	} else {
+		shell_error(sh, "usage: m64 fpgapwr <on|off>");
+		return -EINVAL;
+	}
+	return 0;
+}
+
+/* m64 fpgastat : probe FPGA power/liveness and report config pin states.
+ *
+ * A dead or unpowered FPGA will not pull INIT_B low when PROGRAM_B is
+ * asserted, nor release it high afterwards. This runs that handshake and
+ * reports each transition, plus the static pin levels, without programming.
+ */
+static int cmd_m64_fpgastat(const struct shell *sh, size_t argc, char **argv)
+{
+	ARG_UNUSED(argc);
+	ARG_UNUSED(argv);
+
+	int init0, init1, done_before, done_after;
+
+	/* Static state before poking anything. */
+	shell_print(sh, "pwr_en=%d ss_boot_ctrl(strap)=%d",
+		    gpio_pin_get_dt(&fpga_pwr_en),
+		    gpio_pin_get_dt(&fpga_ss_boot_ctrl));
+	shell_print(sh, "before: INIT_B=%d DONE=%d",
+		    gpio_pin_get_dt(&fpga_init_b),
+		    gpio_pin_get_dt(&fpga_done));
+	done_before = gpio_pin_get_dt(&fpga_done);
+
+	/* Assert PROGRAM_B: a live FPGA pulls INIT_B low while clearing. */
+	(void)gpio_pin_set_dt(&fpga_program_b, 1);   /* assert (active-low) */
+	k_msleep(5);
+	init0 = gpio_pin_get_dt(&fpga_init_b);
+
+	/* Release PROGRAM_B: INIT_B should go high once memory is cleared. */
+	(void)gpio_pin_set_dt(&fpga_program_b, 0);
+	k_msleep(5);
+	init1 = gpio_pin_get_dt(&fpga_init_b);
+	done_after = gpio_pin_get_dt(&fpga_done);
+
+	shell_print(sh, "PROGRAM_B asserted : INIT_B=%d (expect 0)", init0);
+	shell_print(sh, "PROGRAM_B released : INIT_B=%d (expect 1)", init1);
+	shell_print(sh, "DONE before/after  : %d / %d", done_before, done_after);
+
+	if (init0 == 0 && init1 == 1) {
+		shell_print(sh, "=> FPGA is powered and its config logic responds.");
+	} else if (init0 == 1 && init1 == 1) {
+		shell_warn(sh, "=> INIT_B never went low: FPGA not responding to "
+			       "PROGRAM_B (unpowered? PROGRAM_B not reaching it? "
+			       "wrong polarity?).");
+	} else {
+		shell_warn(sh, "=> Unexpected INIT_B behavior; check wiring/power.");
+	}
+	return 0;
+}
+
+/* m64 fpga [path] [phase] : program the FPGA (Slave-Serial) from a .bin.
+ *   phase 0 = sample on rising CCLK edge (default), 1 = falling edge.
+ */
+static int cmd_m64_fpga(const struct shell *sh, size_t argc, char **argv)
+{
+	const char *path = (argc > 1) ? argv[1] : "/SD:/fpga.bin";
+	int rc;
+
+	if (!sd_mounted) {
+		shell_error(sh, "SD not mounted (run 'm64 sd mount')");
+		return -ENODEV;
+	}
+
+	if (argc > 2) {
+		fpga_clk_phase = (atoi(argv[2]) != 0) ? 1 : 0;
+	}
+	shell_print(sh, "programming (clk phase %d, sample on %s edge)...",
+		    fpga_clk_phase, fpga_clk_phase ? "falling" : "rising");
+
+	rc = fpga_program_path(path);
+	if (rc != 0) {
+		shell_error(sh, "FPGA program failed (%d)", rc);
+		return rc;
+	}
+	shell_print(sh, "FPGA programmed from %s", path);
+	return 0;
+}
+
+/* m64 fpgacrc [path] : read the whole file from SD and report size + CRC32.
+ *
+ * Compare against the host value (e.g. python3 zlib.crc32) to confirm the SD
+ * read path is not corrupting the bitstream. Uses the same 64 KiB burst reads
+ * as programming. crc32_ieee() matches the standard/zlib CRC32.
+ */
+static int cmd_m64_fpgacrc(const struct shell *sh, size_t argc, char **argv)
+{
+	const char *path = (argc > 1) ? argv[1] : "/SD:/fpga.bin";
+	static uint8_t buf[64 * 1024];
+	struct fs_file_t file;
+	uint32_t crc = 0;
+	size_t total = 0;
+	ssize_t n;
+	int rc;
+
+	if (!sd_mounted) {
+		shell_error(sh, "SD not mounted (run 'm64 sd mount')");
+		return -ENODEV;
+	}
+
+	fs_file_t_init(&file);
+	rc = fs_open(&file, path, FS_O_READ);
+	if (rc < 0) {
+		shell_error(sh, "open(%s) failed (%d)", path, rc);
+		return rc;
+	}
+
+	while ((n = fs_read(&file, buf, sizeof(buf))) > 0) {
+		crc = crc32_ieee_update(crc, buf, (size_t)n);
+		total += (size_t)n;
+	}
+	fs_close(&file);
+
+	if (n < 0) {
+		shell_error(sh, "read failed at offset %zu (%d)", total, (int)n);
+		return (int)n;
+	}
+
+	shell_print(sh, "%s: %zu bytes, CRC32 = 0x%08x", path, total, crc);
+	return 0;
+}
+
 SHELL_STATIC_SUBCMD_SET_CREATE(m64_cmds,
 	SHELL_CMD(leds, NULL,          "Manipulate LEDs.", cmd_m64_leds),
 	SHELL_CMD(sd,   &m64_sd_cmds,  "SD card control.", NULL),
 	SHELL_CMD_ARG(ws2812, NULL, "Send color: ws2812 <RRGGBB>",
 		      cmd_m64_ws2812, 2, 0),
+	SHELL_CMD_ARG(fpga, NULL, "Program FPGA: fpga [path] [phase]",
+		      cmd_m64_fpga, 1, 2),
+	SHELL_CMD(fpgastat, NULL, "Probe FPGA power/liveness (PROGRAM_B/INIT_B).",
+		  cmd_m64_fpgastat),
+	SHELL_CMD_ARG(fpgapwr, NULL, "FPGA power: fpgapwr <on|off>",
+		      cmd_m64_fpgapwr, 2, 0),
+	SHELL_CMD_ARG(fpgatoggle, NULL, "Toggle a config pin: fpgatoggle <clk|din>",
+		      cmd_m64_fpgatoggle, 2, 0),
+	SHELL_CMD_ARG(fpgacrc, NULL, "CRC32 a file from SD: fpgacrc [path]",
+		      cmd_m64_fpgacrc, 1, 1),
 	SHELL_SUBCMD_SET_END
 );
 
@@ -499,12 +855,25 @@ int main(void)
 	 * chosen console, so printk()/LOG output goes over USB directly.
 	 */
 
-  /* Set FPGA configuration mode to 'Slave Serial' (M[2:0] = 3'b111) */
+  /* Set FPGA configuration mode to 'Slave Serial' (M[2:0] = 3'b111).
+   * PG13 gates two N-FETs wired high-side (1V8 -> FET -> M1/M2). Gate high
+   * turns them on, driving M1/M2 to 1V8 = 1; M0 has a fixed pull-up. So
+   * PG13 high => M[2:0]=111 (active-high strap control). */
 	(void)gpio_pin_configure_dt(&fpga_ss_boot_ctrl, GPIO_OUTPUT_ACTIVE);
-  /* Set FPGA programming interface to inactive state */
-	(void)gpio_pin_configure_dt(&fpga_program_b, GPIO_OUTPUT_HIGH | GPIO_OPEN_DRAIN);
+  /* Set FPGA programming interface to inactive state (PROGRAM_B deasserted;
+   * active-low + open-drain, so this drives the line physically high). */
+	(void)gpio_pin_configure_dt(&fpga_program_b, GPIO_OUTPUT_INACTIVE | GPIO_OPEN_DRAIN);
 	(void)gpio_pin_configure_dt(&fpga_init_b, GPIO_INPUT);
 	(void)gpio_pin_configure_dt(&fpga_done, GPIO_INPUT);
+
+	/* Bit-bang config bus: CCLK (PF4) and DIN (PF0) as push-pull outputs,
+	 * both idle low. This also enables the GPIOF port clock. */
+	(void)gpio_pin_configure_dt(&fpga_cclk, GPIO_OUTPUT_INACTIVE);
+	(void)gpio_pin_configure_dt(&fpga_din, GPIO_OUTPUT_INACTIVE);
+
+	/* Deselect the config flash (CS# high) so it stays off the shared
+	 * CCLK/DIN bus. Active-low, so OUTPUT_INACTIVE drives PG12 high. */
+	(void)gpio_pin_configure_dt(&flash_cs, GPIO_OUTPUT_INACTIVE);
 
 	/* Enable various power domains */
 	(void)gpio_pin_configure_dt(&vsys_led_on, GPIO_OUTPUT_ACTIVE);
