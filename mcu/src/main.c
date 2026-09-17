@@ -23,6 +23,7 @@
 #include <soc.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 LOG_MODULE_REGISTER(m64, LOG_LEVEL_INF);
 
@@ -395,6 +396,51 @@ static int cmd_m64_sd_cat(const struct shell *sh, size_t argc, char **argv)
 	return rc;
 }
 
+/* m64 sd usb on|off
+ *
+ * The SD card's raw blocks are exported to the host via USB Mass Storage
+ * (CONFIG_USB_MASS_STORAGE, LUN = "SD"). Zephyr's FatFs and the host cannot
+ * own the FAT simultaneously, so this command just manages the local mount:
+ *
+ *   on  : unmount FatFs so the host owns the card (m64 sd ls/cat stop working)
+ *   off : remount FatFs for local access (host should have ejected first)
+ *
+ * The MSC USB function itself is always enumerated (it comes up at boot with
+ * the rest of the USB stack); toggling the mount is what makes host access
+ * safe.
+ */
+static int cmd_m64_sd_usb(const struct shell *sh, size_t argc, char **argv)
+{
+	ARG_UNUSED(argc);
+
+	if (strcmp(argv[1], "on") == 0) {
+		int rc = unmount_sd();
+
+		if (rc != 0) {
+			shell_error(sh, "could not release SD for USB (%d)", rc);
+			return rc;
+		}
+		shell_print(sh, "SD released to USB host (FatFs unmounted).");
+		shell_warn(sh, "local 'm64 sd ls/cat' disabled until 'usb off'.");
+		return 0;
+	}
+
+	if (strcmp(argv[1], "off") == 0) {
+		int rc = mount_sd();
+
+		if (rc != 0) {
+			shell_error(sh, "remount failed (%d)", rc);
+			return rc;
+		}
+		shell_print(sh, "SD reclaimed locally (FatFs remounted at %s).",
+			    sd_mnt.mnt_point);
+		return 0;
+	}
+
+	shell_error(sh, "usage: m64 sd usb <on|off>");
+	return -EINVAL;
+}
+
 SHELL_STATIC_SUBCMD_SET_CREATE(m64_sd_cmds,
 	SHELL_CMD(mount,   NULL, "Mount the SD card.",       cmd_m64_sd_mount),
 	SHELL_CMD(unmount, NULL, "Unmount the SD card.",     cmd_m64_sd_unmount),
@@ -402,6 +448,8 @@ SHELL_STATIC_SUBCMD_SET_CREATE(m64_sd_cmds,
 		      cmd_m64_sd_ls, 1, 1),
 	SHELL_CMD_ARG(cat, NULL, "Print a file: cat <path>",
 		      cmd_m64_sd_cat, 2, 0),
+	SHELL_CMD_ARG(usb, NULL, "Export SD over USB: usb <on|off>",
+		      cmd_m64_sd_usb, 2, 0),
 	SHELL_SUBCMD_SET_END
 );
 
