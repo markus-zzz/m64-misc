@@ -75,7 +75,7 @@ static const struct gpio_dt_spec flash_cs =
 #define FPGA_CCLK_PORT GPIOF
 #define FPGA_CCLK_PIN  4U
 #define FPGA_DIN_PORT  GPIOF
-#define FPGA_DIN_PIN   0U
+#define FPGA_DIN_PIN   1U
 
 /* BSRR set/reset masks (atomic single-store level changes). */
 #define FPGA_CCLK_SET  (1U << FPGA_CCLK_PIN)
@@ -98,10 +98,19 @@ static const struct gpio_dt_spec fpga_din =
  */
 static int fpga_clk_phase;
 
-/* Clock out one byte MSB-first, honoring fpga_clk_phase. */
+/* Optional leading dummy bytes (each = 8 CCLKs with DIN high) sent after
+ * INIT_B rises, before the bitstream. Set via `m64 fpga <path> <phase> <n>`. */
+static int fpga_lead_clocks;
+
+/* Bit order within each byte: 0 = MSB-first (standard), 1 = LSB-first.
+ * UltraScale+ serial config paths sometimes expect bit-reversed bytes. */
+static int fpga_lsb_first;
+
+/* Clock out one byte, honoring fpga_clk_phase and fpga_lsb_first. */
 static inline void fpga_bitbang_byte(uint8_t b)
 {
-	for (int i = 7; i >= 0; i--) {
+	for (int k = 0; k < 8; k++) {
+		int i = fpga_lsb_first ? k : (7 - k);   /* bit index this step */
 		uint32_t din = (b & (1U << i)) ? FPGA_DIN_SET : FPGA_DIN_CLR;
 
 		if (fpga_clk_phase == 0) {
@@ -167,6 +176,15 @@ static int fpga_program_path(const char *binpath)
 		k_msleep(1);
 	}
 	LOG_INF("FPGA ready for bitstream (bit-bang)");
+
+	/* Optional leading dummy clocks (DIN idle high) before the bitstream. */
+	if (fpga_lead_clocks > 0) {
+		FPGA_DIN_PORT->BSRR = FPGA_DIN_SET;   /* DIN high during dummies */
+		for (int i = 0; i < fpga_lead_clocks; i++) {
+			fpga_bitbang_byte(0xFF);
+		}
+		LOG_INF("sent %d leading dummy bytes", fpga_lead_clocks);
+	}
 
 	/* Read a big block, then clock it out; repeat. SD and GPIO never
 	 * overlap, and each SD session is a fast burst.
@@ -672,7 +690,7 @@ static int cmd_m64_fpgatoggle(const struct shell *sh, size_t argc, char **argv)
 	shell_print(sh, "toggling %s ~2 Hz for 10 s; probe it at the FPGA...",
 		    do_clk ? "CCLK(PF4)" : "DIN(PF0)");
 
-	for (int i = 0; i < 20; i++) {
+	for (int i = 0; i < 200000; i++) {
 		if (do_clk) {
 			FPGA_CCLK_PORT->BSRR = (i & 1) ? FPGA_CCLK_SET
 						       : FPGA_CCLK_CLR;
@@ -680,12 +698,60 @@ static int cmd_m64_fpgatoggle(const struct shell *sh, size_t argc, char **argv)
 			FPGA_DIN_PORT->BSRR = (i & 1) ? FPGA_DIN_SET
 						      : FPGA_DIN_CLR;
 		}
-		k_msleep(250);
+		k_msleep(1);
 	}
 	/* Leave both idle low. */
 	FPGA_CCLK_PORT->BSRR = FPGA_CCLK_CLR;
 	FPGA_DIN_PORT->BSRR = FPGA_DIN_CLR;
 	shell_print(sh, "done");
+	return 0;
+}
+
+/* m64 fpgadrive : drive CCLK/DIN high and low and read the ACTUAL pin level
+ * back via the input data register. If the readback doesn't follow what we
+ * drive, something else is holding/contending the line (e.g. the flash on the
+ * shared OCTOSPI bus, or an alternate-function owner). Works without external
+ * probes since we sense the pin electrically via IDR. */
+static int cmd_m64_fpgadrive(const struct shell *sh, size_t argc, char **argv)
+{
+	ARG_UNUSED(argc);
+	ARG_UNUSED(argv);
+
+	/* Reconfigure both pins as outputs (push-pull) and also allow reading
+	 * their input state: Zephyr's GPIO_OUTPUT keeps the input buffer on
+	 * for most STM32 configs, so gpio_pin_get_dt reads the live level. */
+	struct {
+		const char *name;
+		const struct gpio_dt_spec *sp;
+		uint32_t set, clr;
+	} pins[] = {
+		{ "CCLK(PF4)", &fpga_cclk, FPGA_CCLK_SET, FPGA_CCLK_CLR },
+		{ "DIN(PF0)",  &fpga_din,  FPGA_DIN_SET,  FPGA_DIN_CLR  },
+	};
+
+	for (int p = 0; p < 2; p++) {
+		(void)gpio_pin_configure_dt(pins[p].sp, GPIO_OUTPUT);
+
+		/* Drive high, read back. */
+		(pins[p].sp == &fpga_cclk ? FPGA_CCLK_PORT : FPGA_DIN_PORT)->BSRR
+			= pins[p].set;
+		k_busy_wait(10);
+		int hi = gpio_pin_get_dt(pins[p].sp);
+
+		/* Drive low, read back. */
+		(pins[p].sp == &fpga_cclk ? FPGA_CCLK_PORT : FPGA_DIN_PORT)->BSRR
+			= pins[p].clr;
+		k_busy_wait(10);
+		int lo = gpio_pin_get_dt(pins[p].sp);
+
+		shell_print(sh, "%-10s drive1->read %d  drive0->read %d  %s",
+			    pins[p].name, hi, lo,
+			    (hi == 1 && lo == 0) ? "OK (MCU controls pin)"
+					         : "!! readback mismatch - contention?");
+	}
+	/* Leave idle low. */
+	FPGA_CCLK_PORT->BSRR = FPGA_CCLK_CLR;
+	FPGA_DIN_PORT->BSRR = FPGA_DIN_CLR;
 	return 0;
 }
 
@@ -772,8 +838,15 @@ static int cmd_m64_fpga(const struct shell *sh, size_t argc, char **argv)
 	if (argc > 2) {
 		fpga_clk_phase = (atoi(argv[2]) != 0) ? 1 : 0;
 	}
-	shell_print(sh, "programming (clk phase %d, sample on %s edge)...",
-		    fpga_clk_phase, fpga_clk_phase ? "falling" : "rising");
+	if (argc > 3) {
+		fpga_lead_clocks = atoi(argv[3]);
+	}
+	if (argc > 4) {
+		fpga_lsb_first = (atoi(argv[4]) != 0) ? 1 : 0;
+	}
+	shell_print(sh, "programming (phase %d/%s edge, %d lead bytes, %s-first)...",
+		    fpga_clk_phase, fpga_clk_phase ? "falling" : "rising",
+		    fpga_lead_clocks, fpga_lsb_first ? "LSB" : "MSB");
 
 	rc = fpga_program_path(path);
 	if (rc != 0) {
@@ -832,14 +905,16 @@ SHELL_STATIC_SUBCMD_SET_CREATE(m64_cmds,
 	SHELL_CMD(sd,   &m64_sd_cmds,  "SD card control.", NULL),
 	SHELL_CMD_ARG(ws2812, NULL, "Send color: ws2812 <RRGGBB>",
 		      cmd_m64_ws2812, 2, 0),
-	SHELL_CMD_ARG(fpga, NULL, "Program FPGA: fpga [path] [phase]",
-		      cmd_m64_fpga, 1, 2),
+	SHELL_CMD_ARG(fpga, NULL, "Program FPGA: fpga [path] [phase] [lead] [lsb]",
+		      cmd_m64_fpga, 1, 4),
 	SHELL_CMD(fpgastat, NULL, "Probe FPGA power/liveness (PROGRAM_B/INIT_B).",
 		  cmd_m64_fpgastat),
 	SHELL_CMD_ARG(fpgapwr, NULL, "FPGA power: fpgapwr <on|off>",
 		      cmd_m64_fpgapwr, 2, 0),
 	SHELL_CMD_ARG(fpgatoggle, NULL, "Toggle a config pin: fpgatoggle <clk|din>",
 		      cmd_m64_fpgatoggle, 2, 0),
+	SHELL_CMD(fpgadrive, NULL, "Drive+readback CCLK/DIN to detect contention.",
+		  cmd_m64_fpgadrive),
 	SHELL_CMD_ARG(fpgacrc, NULL, "CRC32 a file from SD: fpgacrc [path]",
 		      cmd_m64_fpgacrc, 1, 1),
 	SHELL_SUBCMD_SET_END
@@ -854,6 +929,14 @@ int main(void)
 	 * (CONFIG_USB_DEVICE_INITIALIZE_AT_BOOT), and the CDC-ACM port is the
 	 * chosen console, so printk()/LOG output goes over USB directly.
 	 */
+
+  /* Force the FPGA OFF first so we can bring it up with a clean power-on
+   * sequence and a stable mode strap. The FPGA samples M[2:0] at power-up;
+   * if it powered up on a previous MCU boot before the strap was driven, it
+   * may have latched the wrong mode. Driving pwr_en inactive now, setting the
+   * strap, then powering on guarantees M[2:0]=111 is stable across sampling. */
+	(void)gpio_pin_configure_dt(&fpga_pwr_en, GPIO_OUTPUT_INACTIVE);
+	k_msleep(50);   /* let the FPGA rail fully discharge */
 
   /* Set FPGA configuration mode to 'Slave Serial' (M[2:0] = 3'b111).
    * PG13 gates two N-FETs wired high-side (1V8 -> FET -> M1/M2). Gate high
@@ -877,7 +960,9 @@ int main(void)
 
 	/* Enable various power domains */
 	(void)gpio_pin_configure_dt(&vsys_led_on, GPIO_OUTPUT_ACTIVE);
-	(void)gpio_pin_configure_dt(&fpga_pwr_en, GPIO_OUTPUT_ACTIVE);
+	/* Now power the FPGA on with strap + config pins already stable. */
+	(void)gpio_pin_set_dt(&fpga_pwr_en, 1);
+	k_msleep(50);   /* allow power-on ramp + initial config sequence */
 	/* ctrl_led_data_0 (PA0) is the WS2812B data line: configure as a
 	 * push-pull output (this also enables the port clock) and idle low,
 	 * then shift in a color via the bit-bang routine below. */

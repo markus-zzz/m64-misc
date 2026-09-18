@@ -104,8 +104,8 @@
 			label = "FPGA CCLK (PF4)";
 		};
 		fpga_din: fpga_din {
-			gpios = <&gpiof 0 GPIO_ACTIVE_HIGH>;
-			label = "FPGA DIN (PF0)";
+			gpios = <&gpiof 1 GPIO_ACTIVE_HIGH>;
+			label = "FPGA DIN (PF1)";
 		};
 
 		/*
