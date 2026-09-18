@@ -1,11 +1,9 @@
 /*
- * Copyright (c) 2026 ModRetro
  * SPDX-License-Identifier: Apache-2.0
  *
  * ModRetro M64 board devicetree.
  * SoC: STM32H7A3ZIT6 (LQFP144).
  *
- * TODO markers indicate values you MUST verify against your schematic.
  */
 
 /dts-v1/;
@@ -14,9 +12,7 @@
 #include <st/h7/stm32h7a3Xi.dtsi>
 /* Pin control definitions for the ZI (LQFP144) package.
  * Non-Q (without-SMPS) variant: this is the STM32H7A3ZIT6 pinout that exposes
- * PF0-PF15 and PG0-PG15 (the SMPS supply pins are reassigned as GPIO). The
- * previous 'txq' (with-SMPS) include lacked PF0-PF5 and did not match the
- * actual silicon.
+ * PF0-PF15 and PG0-PG15 (the SMPS supply pins are reassigned as GPIO.)
  */
 #include <st/h7/stm32h7a3z(g-i)tx-pinctrl.dtsi>
 
