@@ -143,3 +143,50 @@ FPGA programmed from /SD:/FPGA.BIN
 ```
 This particular FPGA bitstream will do nothing more than produce a square wave
 on the `DATA` pin of the controller ports.
+
+> Well, to be honest I have had success restoring the original ModRetro
+> firmware with their [updater](https://tools.modretro.com/updater/) but I
+> offer absolutely no guarantee that it will always work. I.e. **do NOT do this
+> unless you know what you are doing**.
+
+# Insight
+
+## HDMI
+
+The HDMI setup on the board is more sophisticated than I first anticipated.
+Proper, high performance, HDMI is usually done with licensed vendor IPs, the
+licensing aspect is something that we for obvious reasons would like to avoid.
+
+The plan was to use the HDMI 1.4b block from https://github.com/hdl-util/hdmi
+(note that HDMI 1.4b is limited to 4K at 30Hz). That design relies on two
+`OSERDESE2` primitives (8:1 serializer) in cascade configuration for each TMDS
+channel (to be able to serialize the 10-bit symbol). 
+
+The UltraScale+ architecture has replaced `OSERDESE2` with `OSERDESE3`
+primitives and these are different in the sense that they are still 8:1 but do
+not offer the cascade configuration. As a result some kind of gearbox would
+have to be utilized to turn the stream of 10-bit symbols into a stream of 8-bit
+symbols suitable for the primitive.
+
+It turned out however that the `OSERDESE3` is not available for the FPGA pins
+where the board connects HDMI. Instead these pins are wired to much
+fancier GTH (Gigabit Transceiver High performance) inside the FPGA. These
+require a more sophisticated setup overall.
+
+For starters they need an external reference clock. The board provides this
+with a `8T49N241-998NLGI` Universal Frequency Translator (a fancy PLL that is
+programmable over I2C) that itself is fed from a crystal. The frequency of that
+crystal is not marked in the schematics and neither is its part number. Optical
+inspection of the board suggest the markings `NSK B 40TAA`. Without being able
+to find an exact data sheet a reasonable assumption is that the '40' refers to
+40MHz.
+
+Furthermore the output of the GTH pins is apparently not electrically
+compatible with the HDMI specification so an external `SN75DP159RGZT` HDMI
+retimer is used to resolve that. This one is also configurable over I2C. It
+should be noted that for both this and the frequence translator the I2C signals
+are routed directly to the FPGA (and not the MCU).
+
+The plan is to use the above HDMI block from github but to replace the supplied
+serializer with GTH serializers running in RAW mode. That is the HDMI block
+already provide 8b/10b encoded symbols that are ready for serial transmit.

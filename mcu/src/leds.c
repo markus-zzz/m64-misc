@@ -10,6 +10,12 @@
 #include <zephyr/logging/log.h>
 #include <zephyr/shell/shell.h>
 
+// XXX:TODO: The CYCCNT register is clearable
+// https://support.arm.com/documentation/ddi0403/d/Debug-Architecture/ARMv7-M-Debug/The-Data-Watchpoint-and-Trace-unit/Cycle-Count-register--DWT-CYCCNT?lang=en
+// so instead of repated delays (that accumulate error) a more accurate
+// approach could be to clear the CYCCNT at the start of the transfer and then
+// 'add up the hold points' so that they are in aboslute time.
+
 LOG_MODULE_REGISTER(m64_leds, LOG_LEVEL_INF);
 
 static const struct gpio_dt_spec ctrl_led_data_0 =

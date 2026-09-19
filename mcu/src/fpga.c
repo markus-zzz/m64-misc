@@ -84,6 +84,7 @@ static inline void fpga_bitbang_byte(uint8_t b) {
 
     /* Idle low; sample on rising edge. */
     FPGA_DIN_PORT->BSRR = din;
+    // XXX:TODO: Use CYCCNT here instead of nops
     __asm__ volatile("nop" ::: "memory");
     __asm__ volatile("nop" ::: "memory");
     __asm__ volatile("nop" ::: "memory");

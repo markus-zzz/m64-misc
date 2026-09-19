@@ -1,0 +1,3 @@
+[submodule "fpga/hdmi"]
+	path = fpga/hdmi
+	url = https://github.com/hdl-util/hdmi.git
