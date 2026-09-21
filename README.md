@@ -190,3 +190,14 @@ are routed directly to the FPGA (and not the MCU).
 The plan is to use the above HDMI block from github but to replace the supplied
 serializer with GTH serializers running in RAW mode. That is the HDMI block
 already provide 8b/10b encoded symbols that are ready for serial transmit.
+
+## Data sheets
+
+Links to datasheets for all the major components of the board
+
+| Part number       | Description                             | Link |
+|-------------------|-----------------------------------------|----- |
+| SN75DP159RGZT     | TMDS to HDMI Level Shifter Retimer      | [link](http://ti.com/lit/ds/symlink/sn75dp159.pdf) |
+| 8T49N241-998NLGI  | Universal Frequency Translator          | [link](https://www.renesas.com/en/document/dst/8t49n241-datasheet) |
+| STM32H7A3ZIT6     | STM32 micro controller                  | [link](https://www.st.com/resource/en/datasheet/stm32h7a3zi.pdf) |
+| XCAU15P-2FFVB676E | Xilinx Artix UltraScale+ FPGA           | [link](https://www.xilinx.com/support/documentation/data_sheets/ds890-ultrascale-overview.pdf) |
