@@ -10,6 +10,9 @@ set_property -dict { PACKAGE_PIN AD13 IOSTANDARD LVCMOS33 } [get_ports { n64_ctr
 set_property -dict { PACKAGE_PIN AE15 IOSTANDARD LVCMOS33 } [get_ports { n64_ctrl_data[2] }];
 set_property -dict { PACKAGE_PIN AD15 IOSTANDARD LVCMOS33 } [get_ports { n64_ctrl_data[3] }];
 
+set_property -dict { PACKAGE_PIN AD25 IOSTANDARD LVCMOS18 } [get_ports { clk_ctr_scl }];
+set_property -dict { PACKAGE_PIN AD26 IOSTANDARD LVCMOS18 } [get_ports { clk_ctr_sda }];
+
 # -----------------------------------------------------------------------------
 # HDMI TMDS via GTH transceivers (Quad 226) -> SN75DP159 redriver.
 #

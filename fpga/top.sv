@@ -5,6 +5,9 @@ module top(
   input wire clk_50mhz,
   input wire rst_din,
   output logic [3:0] n64_ctrl_data,
+  // CLOCK IC I2C
+  inout wire clk_ctr_scl,
+  inout wire clk_ctr_sda,
   // HDMI TMDS via GTH transceivers -> SN75DP159 redriver.
   input  wire       hdmi_mgtrefclk_p,   // 148.5 MHz from external PLL
   input  wire       hdmi_mgtrefclk_n,
@@ -214,6 +217,8 @@ module top(
       32'h0xxx_xxxx: cpu_mem_rdata = rom_rdata;
       32'h1xxx_xxxx: cpu_mem_rdata = ram_rdata;
       32'h2xxx_xxx4: cpu_mem_rdata = {31'h0, busy};
+      32'h2xxx_xxx8: cpu_mem_rdata = {31'h0, clk_ctr_scl};
+      32'h2xxx_xxxc: cpu_mem_rdata = {31'h0, clk_ctr_sda};
       default: cpu_mem_rdata = 0;
     endcase
   end
@@ -260,6 +265,28 @@ module top(
 
   // Output UART on all four controller ports
   assign n64_ctrl_data = {4{uart_tx_shift[0]}};
+//  assign n64_ctrl_data = {clk_ctr_scl, clk_ctr_sda, {2{uart_tx_shift[0]}}};
+
+  // External Clock control I2C
+  logic r_clk_ctr_scl;
+  logic r_clk_ctr_sda;
+  logic r_clk_ctr_scl_oe;
+  logic r_clk_ctr_sda_oe;
+
+  assign clk_ctr_scl = r_clk_ctr_scl_oe ? r_clk_ctr_scl : 1'bz;
+  assign clk_ctr_sda = r_clk_ctr_sda_oe ? r_clk_ctr_sda : 1'bz;
+
+  always_ff @(posedge clk) begin
+    if (rst) begin
+      {r_clk_ctr_scl_oe, r_clk_ctr_scl} <= 0;
+      {r_clk_ctr_sda_oe, r_clk_ctr_sda} <= 0;
+    end else if (cpu_mem_valid && cpu_mem_wstrb == 4'b1111) begin
+      casex (cpu_mem_addr)
+        32'h2000_0008:{r_clk_ctr_scl_oe, r_clk_ctr_scl} <= cpu_mem_wdata[1:0];
+        32'h2000_000c:{r_clk_ctr_sda_oe, r_clk_ctr_sda} <= cpu_mem_wdata[1:0];
+      endcase
+    end
+  end
 
 endmodule
 
