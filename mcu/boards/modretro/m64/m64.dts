@@ -104,6 +104,11 @@
 			label = "FPGA DIN (PF1)";
 		};
 
+		fpga_rst: fpga_rst {
+			gpios = <&gpiof 6 GPIO_ACTIVE_HIGH>;
+			label = "FPGA DIN (PF6)";
+		};
+
 		/*
 		 * Config flash chip-select (PG12 = OCTOSPI2 NCS). The bitstream
 		 * flash shares the CCLK/DIN bus with the FPGA's Slave-Serial

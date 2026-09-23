@@ -28,8 +28,10 @@ module tb_hdmi_gth_tx;
     wire  [2:0] hdmi_tx_p, hdmi_tx_n;
     wire        hdmi_clk_p, hdmi_clk_n;
 
+    wire tx_ready     = dut.tx_ready;
     top dut (
         .clk_50mhz(clk_50mhz),
+        .rst_din(~tx_ready),
         .n64_ctrl_data(n64_ctrl_data),
         .hdmi_mgtrefclk_p(hdmi_mgtrefclk_p),
         .hdmi_mgtrefclk_n(hdmi_mgtrefclk_n),
@@ -41,7 +43,6 @@ module tb_hdmi_gth_tx;
 
     // -------- observe internal readiness via hierarchical refs --------
     // tx_ready lives in top; use a hierarchical path for the message.
-    wire tx_ready     = dut.tx_ready;
     wire mmcm_locked  = dut.mmcm_locked;
     wire hdmi_reset   = dut.hdmi_reset;
     wire clk_pixel    = dut.clk_pixel;
@@ -129,7 +130,6 @@ module tb_hdmi_gth_tx;
             $display("[%0t] FAIL: packer/lane-map mismatches detected", $time);
         else
             $display("[%0t] PASS: packing, bit order, and lane mapping correct", $time);
-
         $finish;
     end
 

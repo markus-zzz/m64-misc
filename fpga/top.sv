@@ -1,9 +1,10 @@
 `default_nettype none
 
+
 module top(
   input wire clk_50mhz,
+  input wire rst_din,
   output logic [3:0] n64_ctrl_data,
-
   // HDMI TMDS via GTH transceivers -> SN75DP159 redriver.
   input  wire       hdmi_mgtrefclk_p,   // 148.5 MHz from external PLL
   input  wire       hdmi_mgtrefclk_n,
@@ -12,15 +13,6 @@ module top(
   output wire       hdmi_clk_p,         // TMDS clock lane
   output wire       hdmi_clk_n
 );
-
-  // ---------------------------------------------------------------------------
-  // N64 controller square-wave stub (unchanged).
-  // ---------------------------------------------------------------------------
-  logic [7:0] cntr;
-  always_ff @(posedge clk_50mhz)
-    cntr <= cntr + 1;
-  assign n64_ctrl_data = cntr[7:4];
-
   // ---------------------------------------------------------------------------
   // Free-running clock (~25 MHz) for the GT reset controller / DRP, derived
   // from the 50 MHz board clock. Must be independent of the GT.
@@ -149,6 +141,125 @@ module top(
     .tx_ready(tx_ready),
     .txusrclk2_out(txusrclk2)
   );
+
+  logic [2:0] rst_sync;
+  always_ff @(posedge clk_50mhz) begin
+    rst_sync <= {rst_din, rst_sync[2:1]};
+  end
+
+  logic clk, rst;
+  assign clk = clk_50mhz;
+  assign rst = rst_sync[0];
+  // XXX: Put the entire CPU subsystem in its own module
+  logic cpu_mem_valid;
+  logic cpu_mem_instr;
+  logic cpu_mem_ready;
+  logic [31:0] cpu_mem_addr;
+  logic [31:0] cpu_mem_wdata;
+  logic [3:0]  cpu_mem_wstrb;
+  logic [31:0] cpu_mem_rdata;
+  logic [31:0] ram_rdata;
+  logic [31:0] rom_rdata;
+
+  // CPU ROM
+  spram #(
+      .ADDR_WIDTH(15),
+      .DATA_WIDTH(32),
+      .INIT_FILE("/tmp/bios.vh")
+  ) u_rom (
+      .clk (clk),
+      .addr(cpu_mem_addr[31:2]),
+      .rd_data(rom_rdata),
+      .wr_en(1'b0)
+  );
+
+  // CPU RAM
+  genvar gi;
+  generate
+    for (gi = 0; gi < 4; gi = gi + 1) begin : ram
+      spram #(
+          .ADDR_WIDTH(10),
+          .DATA_WIDTH(8)
+      ) u_ram (
+          .clk (clk),
+          .addr(cpu_mem_addr[31:2]),
+          .rd_data(ram_rdata[(gi+1)*8-1:gi*8]),
+          .wr_data(cpu_mem_wdata[(gi+1)*8-1:gi*8]),
+          .wr_en  (cpu_mem_wstrb[gi] && (cpu_mem_valid && cpu_mem_addr[31:28] == 4'h1))
+      );
+    end
+  endgenerate
+
+  // CPU
+  picorv32 #(
+      .COMPRESSED_ISA(1),
+      .ENABLE_MUL(1),
+      .ENABLE_DIV(1)
+  ) u_cpu (
+      .clk(clk),
+      .resetn(~rst),
+      // PicoRV32 Native Memory Interface
+      .mem_valid(cpu_mem_valid),
+      .mem_instr(cpu_mem_instr),
+      .mem_ready(cpu_mem_ready),
+      .mem_addr (cpu_mem_addr),
+      .mem_wdata(cpu_mem_wdata),
+      .mem_wstrb(cpu_mem_wstrb),
+      .mem_rdata(cpu_mem_rdata)
+  );
+
+  logic busy;
+  always_comb begin
+    casex (cpu_mem_addr)
+      32'h0xxx_xxxx: cpu_mem_rdata = rom_rdata;
+      32'h1xxx_xxxx: cpu_mem_rdata = ram_rdata;
+      32'h2xxx_xxx4: cpu_mem_rdata = {31'h0, busy};
+      default: cpu_mem_rdata = 0;
+    endcase
+  end
+
+  always_ff @(posedge clk) begin
+    if (rst) cpu_mem_ready <= 0;
+    else begin
+      casex (cpu_mem_addr)
+        32'h0xxx_xxxx: cpu_mem_ready <= ~cpu_mem_ready & cpu_mem_valid;
+        32'h1xxx_xxxx: cpu_mem_ready <= ~cpu_mem_ready & cpu_mem_valid;
+        32'h2xxx_xxxx: cpu_mem_ready <= ~cpu_mem_ready & cpu_mem_valid;
+        default:       cpu_mem_ready <= 0;
+      endcase
+    end
+  end
+
+  // Simple UART (tx only) 8N1 at 115200
+  localparam PRESCALE = 50_000_000 / 115200;
+  logic [9:0] uart_tx_shift;
+  logic [$clog2(PRESCALE)-1:0] prescale_cntr;
+  logic [3:0] shift_cntr;
+
+  always_ff @(posedge clk) begin
+    if (rst) begin
+      busy <= 0;
+      uart_tx_shift[0] <= 1'b1; // Line idle state
+    end else if (cpu_mem_valid && cpu_mem_addr == 32'h2000_0000 && cpu_mem_wstrb == 4'b1111) begin
+      prescale_cntr <= 0;
+      shift_cntr <= 0;
+      uart_tx_shift <= {1'b1, cpu_mem_wdata[7:0], 1'b0}; // Stop, data, Start
+      busy <= 1;
+    end else begin
+      prescale_cntr <= prescale_cntr + 1;
+      if (prescale_cntr == PRESCALE - 1) begin
+        prescale_cntr <= 0;
+        shift_cntr <= shift_cntr + 1;
+        uart_tx_shift <= {1'b1, uart_tx_shift[9:1]};
+        if (shift_cntr == 9) begin
+          busy <= 0;
+        end
+      end
+    end
+  end
+
+  // Output UART on all four controller ports
+  assign n64_ctrl_data = {4{uart_tx_shift[0]}};
 
 endmodule
 

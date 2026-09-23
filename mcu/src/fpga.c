@@ -29,6 +29,9 @@ static const struct gpio_dt_spec fpga_cclk =
 static const struct gpio_dt_spec fpga_din =
     GPIO_DT_SPEC_GET(DT_NODELABEL(fpga_din), gpios);
 
+static const struct gpio_dt_spec fpga_rst =
+    GPIO_DT_SPEC_GET(DT_NODELABEL(fpga_rst), gpios);
+
 /*
  * ---------------------------------------------------------------------------
  * FPGA Slave-Serial configuration - BIT-BANG (temporary bring-up).
@@ -71,6 +74,7 @@ void fpga_setup_pins(void) {
    * both idle low. This also enables the GPIOF port clock. */
   (void)gpio_pin_configure_dt(&fpga_cclk, GPIO_OUTPUT_INACTIVE);
   (void)gpio_pin_configure_dt(&fpga_din, GPIO_OUTPUT_INACTIVE);
+  (void)gpio_pin_configure_dt(&fpga_rst, GPIO_OUTPUT_INACTIVE);
 
   /* Deselect the config flash (CS# high) so it stays off the shared
    * CCLK/DIN bus. Active-low, so OUTPUT_INACTIVE drives PG12 high. */
@@ -201,12 +205,19 @@ static int fpga_program_path(const char *binpath) {
     if (gpio_pin_get_dt(&fpga_done) == 1) {
       LOG_INF("FPGA configured: DONE high after %d startup clocks",
               (burst + 1) * 64);
+
+      // Apply core reset
+      (void)gpio_pin_configure_dt(&fpga_rst, GPIO_OUTPUT_ACTIVE);
+      k_msleep(1);
+      (void)gpio_pin_configure_dt(&fpga_rst, GPIO_OUTPUT_INACTIVE);
+
       return 0;
     }
   }
 
   LOG_ERR("FPGA config failed: DONE low (INIT_B=%d)",
           gpio_pin_get_dt(&fpga_init_b));
+
   return -EIO;
 }
 

@@ -18,6 +18,8 @@ create_project hdmi_sim $projDir -part $partName -force
 # Design sources.
 add_files [glob ./hdmi/src/*.sv]
 add_files ./hdmi_gth_tx_wrapper.sv
+add_files ./picorv32.v
+add_files ./spram.sv
 add_files ./top.sv
 
 # Generated GTH IP (add the .xci so Vivado manages its sim sources + libraries).
