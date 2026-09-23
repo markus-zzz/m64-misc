@@ -154,25 +154,35 @@ int main(void) {
   *R_I2C_SDA = I2C_DRIVE_Z;
 
   unsigned idx = 0;
-  while (1) {
-    uart_print("Hello from FPGA!");
-    uart_print("Testing arguments 0x%x foobar 0x%x", 0x12345678, idx++);
+  uart_print("Hello from FPGA!");
+  uart_print("Testing arguments 0x%x foobar 0x%x", 0x12345678, idx++);
 
-    uint8_t data[8];
+  uint8_t data[16];
 
-    ext_clock_read_reg(0x0002, data, 4);
-    uint16_t dev_id = ((uint16_t)data[0] << 12) | (data[1] << 4) | (data[2] >> 4);
-    uart_print("ext_clock: DEV_ID: 0x%x", dev_id);
-    uint16_t dash_code = ((uint16_t)(data[2] & 0xf) << 7) | (data[3] >> 1);
-    uart_print("ext_clock: DASH_CODE: 0x%x", dash_code);
+  ext_clock_read_reg(0x0002, data, 4);
+  uint16_t dev_id = ((uint16_t)data[0] << 12) | (data[1] << 4) | (data[2] >> 4);
+  uart_print("ext_clock: DEV_ID: 0x%x", dev_id);
+  uint16_t dash_code = ((uint16_t)(data[2] & 0xf) << 7) | (data[3] >> 1);
+  uart_print("ext_clock: DASH_CODE: 0x%x", dash_code);
 
-    ext_clock_read_reg(0x0006, data, 2);
-    uint8_t uftadd = data[0];
-    uart_print("ext_clock: UFTADD: 0x%x", uftadd);
+  ext_clock_read_reg(0x0006, data, 2);
+  uint8_t uftadd = data[0];
+  uart_print("ext_clock: UFTADD: 0x%x", uftadd);
 
-    for (volatile int i = 0; i < 1000000; i++)
-      ; // Wait a while
-  }
+  // Configure 'Analog PLL Control Register'
+  ext_clock_read_reg(0x0068, data, 4);
+  data[1] |= 0x8; // Set SYN_MODE
+  ext_clock_write_reg(0x0068, data, 4);
+
+  // Configure 'Digital PLL Input Control Register'
+  ext_clock_read_reg(0x0008, data, 9);
+  data[2] = (data[2] & ~0x03) | 0x1; // Force FREERUN
+  ext_clock_write_reg(0x0008, data, 9);
+
+  // Configure 'Output Clock Source Control Register'
+  ext_clock_read_reg(0x0063, data, 5);
+  data[0] |= 0x3; // CLK_SEL2 = Crystal input
+  ext_clock_write_reg(0x0063, data, 5);
 
   return 0;
 }
