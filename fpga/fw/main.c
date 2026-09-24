@@ -148,6 +148,56 @@ int ext_clock_read_reg(uint16_t addr, uint8_t *data, unsigned count) {
   return nack;
 }
 
+static const uint8_t timing_commander[] = {
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFE, 0xEF, 0x00, 0x03, 0x00, 0x31, 0x00, 0x00, 0x01, 0x00,
+    0x00, 0x01, 0x07, 0x00, 0x00, 0x07, 0x00, 0x00, 0x77, 0x6D, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0x03, 0x3F, 0x00, 0x28, 0x00, 0x1A, 0xCC, 0xCD, 0x00, 0x01,
+    0x00, 0x00, 0xD0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00,
+    0x00, 0x22, 0x22, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0B, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xE2,
+    0x0A, 0x2B, 0x20, 0x00, 0x00, 0x00, 0x0B, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x27, 0xCC, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x09};
+
+// Crude busy-wait "delay" used only to give the PLL time to acquire lock.
+// Not calibrated to real time; just needs to be "long enough" (~ms range).
+static void long_delay(void) {
+  for (volatile uint32_t i = 0; i < 200000; i++)
+    ;
+}
+
+// Continuously monitor whether the external clock's Digital PLL is locked.
+//
+// LOL_INT (Interrupt Status register 0x0200, bit D6) is a sticky,
+// write-1-to-clear bit. It is always set right after configuration because
+// the PLL was unlocked during startup, so a single read is not meaningful.
+// Each iteration:
+//   1. Clear LOL_INT (and other alarms) by writing 1 to the W1C bits.
+//   2. Wait a while.
+//   3. Read 0x0200. If LOL_INT is still 0 the PLL stayed locked over that
+//      interval; if it is 1 the PLL lost lock at some point since the clear.
+// This function never returns.
+static void ext_clock_monitor_lock(void) {
+  for (;;) {
+    uint8_t s[1];
+
+    // Clear the sticky alarms latched since the last check.
+    // 0x0200 bits: D6=LOL_INT, D4=HOLD_INT, D1=LOS1_INT, D0=LOS0_INT (W1C).
+    s[0] = 0x53; // write 1 to clear LOL | HOLD | LOS1 | LOS0
+    ext_clock_write_reg(0x0200, s, 1);
+
+    // Let it run for a while and see whether LOL re-asserts.
+    long_delay();
+
+    ext_clock_read_reg(0x0200, s, 1);
+    if (s[0] & 0x40) {
+      uart_print("ext_clock: PLL NOT locked (INT_STATUS 0x%x)", s[0]);
+    } else {
+      uart_print("ext_clock: PLL locked (INT_STATUS 0x%x)", s[0]);
+    }
+  }
+}
+
 int main(void) {
 
   *R_I2C_SCL = I2C_DRIVE_Z;
@@ -169,7 +219,16 @@ int main(void) {
   uint8_t uftadd = data[0];
   uart_print("ext_clock: UFTADD: 0x%x", uftadd);
 
-  // Configure 'Analog PLL Control Register'
+#if 1
+  // Skip the first 8 registers (0x0000-0x0007): Startup Control (boot/EEPROM
+  // control), read-only Device ID, and the Serial Interface Control register
+  // which holds the I2C slave address. Writing those from the Timing Commander
+  // dump reprograms the slave address / triggers an EEPROM reboot and makes the
+  // device stop ACKing (observed as NACKs and 0xff reads). Start at 0x0008,
+  // the first Digital PLL configuration register.
+  ext_clock_write_reg(0x0008, &timing_commander[0x08],
+                      sizeof(timing_commander) - 0x08);
+#else
   ext_clock_read_reg(0x0068, data, 4);
   data[1] |= 0x8; // Set SYN_MODE
   ext_clock_write_reg(0x0068, data, 4);
@@ -183,6 +242,12 @@ int main(void) {
   ext_clock_read_reg(0x0063, data, 5);
   data[0] |= 0x3; // CLK_SEL2 = Crystal input
   ext_clock_write_reg(0x0063, data, 5);
+#endif
+
+  // Give the PLL time to acquire lock after configuration, then monitor
+  // the lock status forever.
+  long_delay();
+  ext_clock_monitor_lock();
 
   return 0;
 }

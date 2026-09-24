@@ -265,8 +265,8 @@ module top(
 
   // Output UART on all four controller ports
 //  assign n64_ctrl_data = {4{uart_tx_shift[0]}};
-  assign n64_ctrl_data = {4{hdmi_mgtrefclk_p}};
-//  assign n64_ctrl_data = {clk_ctr_scl, clk_ctr_sda, {2{uart_tx_shift[0]}}};
+//  assign n64_ctrl_data = {4{hdmi_mgtrefclk_p}};
+  assign n64_ctrl_data = {clk_ctr_scl, clk_ctr_sda, {2{uart_tx_shift[0]}}};
 
   // External Clock control I2C
   logic r_clk_ctr_scl;
