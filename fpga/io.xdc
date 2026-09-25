@@ -13,6 +13,9 @@ set_property -dict { PACKAGE_PIN AD15 IOSTANDARD LVCMOS33 } [get_ports { n64_ctr
 set_property -dict { PACKAGE_PIN AD25 IOSTANDARD LVCMOS18 } [get_ports { clk_ctr_scl }];
 set_property -dict { PACKAGE_PIN AD26 IOSTANDARD LVCMOS18 } [get_ports { clk_ctr_sda }];
 
+set_property -dict { PACKAGE_PIN J11 IOSTANDARD LVCMOS33 } [get_ports { hdmi_out_en }];
+set_property -dict { PACKAGE_PIN H13 IOSTANDARD LVCMOS33 } [get_ports { hdmi_tx0_oe }];
+
 # -----------------------------------------------------------------------------
 # HDMI TMDS via GTH transceivers (Quad 226) -> SN75DP159 redriver.
 #
@@ -53,3 +56,9 @@ set_max_delay -datapath_only \
 set_max_delay -datapath_only \
   -from [get_cells -hier -filter {NAME =~ *gth_tx*load_toggle_reg*}] \
   -to   [get_cells -hier -filter {NAME =~ *gth_tx*ld_sync_reg[0]*}] 6.700
+
+# GT TX status readback (txusrclk2 -> clk / sys_clk_pin), a 2-FF synchronizer on
+# gt_stat_meta. These are slow-changing level signals sampled asynchronously;
+# the metastability-hardening flop tolerates the crossing, so declare the path
+# false rather than let the tool try (and fail) to close it as synchronous.
+set_false_path -to [get_pins {gt_stat_meta_reg[*]/D}]

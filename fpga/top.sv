@@ -8,6 +8,9 @@ module top(
   // CLOCK IC I2C
   inout wire clk_ctr_scl,
   inout wire clk_ctr_sda,
+  // HDMI retimer
+  output wire hdmi_out_en, // Power
+  output wire hdmi_tx0_oe,
   // HDMI TMDS via GTH transceivers -> SN75DP159 redriver.
   input  wire       hdmi_mgtrefclk_p,   // 148.5 MHz from external PLL
   input  wire       hdmi_mgtrefclk_n,
@@ -103,13 +106,9 @@ module top(
   logic [11:0] screen_width, frame_width;
   logic [10:0] screen_height, frame_height;
   logic [23:0] rgb = 24'd0;
+
   always_ff @(posedge clk_pixel)
-    rgb <= {
-      cx == 12'd0                 ? 8'hFF : 8'h00,
-      cy == 11'd0                 ? 8'hFF : 8'h00,
-      (cx == screen_width - 12'd1 ||
-       cy == screen_height - 11'd1) ? 8'hFF : 8'h00
-    };
+    rgb <= (cx[6:0] == 0) || (cy[5:0] == 0) ? 24'hff_ff_ff : 24'h0;
 
   logic [2:0] tmds_unused;
   logic       tmds_clock_unused;
@@ -316,5 +315,8 @@ module top(
       endcase
     end
   end
+
+  assign hdmi_out_en = 1'b1;
+  assign hdmi_tx0_oe = 1'b1;
 
 endmodule
