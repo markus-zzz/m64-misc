@@ -11,6 +11,12 @@ volatile uint32_t *const R_UART_TX_BUSY = (volatile uint32_t *)0x20000004;
 volatile uint32_t *const R_I2C_SCL = (volatile uint32_t *)0x20000008; // {oe, scl}
 volatile uint32_t *const R_I2C_SDA = (volatile uint32_t *)0x2000000c; // {oe, sda}
 
+// GT TX status: bit0=tx_ready, bit1=tx_reset_done(->CPLL locked), bit2=userclk_active
+volatile uint32_t *const R_GT_STATUS    = (volatile uint32_t *)0x2000001c;
+// GT reset control (bit0: 1=assert reset, 0=release). Pulse after the clock
+// chip is configured so the GT re-runs its lock sequence on a valid refclk.
+volatile uint32_t *const R_GT_RESET     = (volatile uint32_t *)0x20000024;
+
 static void uart_putchar(char c) {
   while (*R_UART_TX_BUSY)
     ;
@@ -148,12 +154,14 @@ int ext_clock_read_reg(uint16_t addr, uint8_t *data, unsigned count) {
   return nack;
 }
 
+// Register configuration exported from Renesas Timing Commander.
+// Config: Crystal input 40 MHz, 148.5 MHz output at Q2 LVDS
 static const uint8_t timing_commander[] = {
     0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFE, 0xEF, 0x00, 0x03, 0x00, 0x31, 0x00, 0x00, 0x01, 0x00,
     0x00, 0x01, 0x07, 0x00, 0x00, 0x07, 0x00, 0x00, 0x77, 0x6D, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0x03, 0x3F, 0x00, 0x28, 0x00, 0x1A, 0xCC, 0xCD, 0x00, 0x01,
     0x00, 0x00, 0xD0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00,
-    0x00, 0x22, 0x22, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0B, 0x00, 0x00, 0x00,
+    0x00, 0x24, 0x42, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0B, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xE2,
     0x0A, 0x2B, 0x20, 0x00, 0x00, 0x00, 0x0B, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -166,18 +174,7 @@ static void long_delay(void) {
     ;
 }
 
-// Continuously monitor whether the external clock's Digital PLL is locked.
-//
-// LOL_INT (Interrupt Status register 0x0200, bit D6) is a sticky,
-// write-1-to-clear bit. It is always set right after configuration because
-// the PLL was unlocked during startup, so a single read is not meaningful.
-// Each iteration:
-//   1. Clear LOL_INT (and other alarms) by writing 1 to the W1C bits.
-//   2. Wait a while.
-//   3. Read 0x0200. If LOL_INT is still 0 the PLL stayed locked over that
-//      interval; if it is 1 the PLL lost lock at some point since the clear.
-// This function never returns.
-static void ext_clock_monitor_lock(void) {
+static void ext_clock_wait_lock(void) {
   for (;;) {
     uint8_t s[1];
 
@@ -194,6 +191,7 @@ static void ext_clock_monitor_lock(void) {
       uart_print("ext_clock: PLL NOT locked (INT_STATUS 0x%x)", s[0]);
     } else {
       uart_print("ext_clock: PLL locked (INT_STATUS 0x%x)", s[0]);
+      return;
     }
   }
 }
@@ -203,9 +201,9 @@ int main(void) {
   *R_I2C_SCL = I2C_DRIVE_Z;
   *R_I2C_SDA = I2C_DRIVE_Z;
 
-  unsigned idx = 0;
-  uart_print("Hello from FPGA!");
-  uart_print("Testing arguments 0x%x foobar 0x%x", 0x12345678, idx++);
+  uart_print("---");
+  uart_print("Hello from PicoRV32 inside the FPGA");
+  uart_print("Testing arguments 0x%x 0x%x", 0x12345678, 0xbadc0ffe);
 
   uint8_t data[16];
 
@@ -219,35 +217,27 @@ int main(void) {
   uint8_t uftadd = data[0];
   uart_print("ext_clock: UFTADD: 0x%x", uftadd);
 
-#if 1
-  // Skip the first 8 registers (0x0000-0x0007): Startup Control (boot/EEPROM
-  // control), read-only Device ID, and the Serial Interface Control register
-  // which holds the I2C slave address. Writing those from the Timing Commander
-  // dump reprograms the slave address / triggers an EEPROM reboot and makes the
-  // device stop ACKing (observed as NACKs and 0xff reads). Start at 0x0008,
-  // the first Digital PLL configuration register.
+  // Apply Timing Commander configuration but skip first 8 bytes as they touch
+  // startup control and I2C address.
   ext_clock_write_reg(0x0008, &timing_commander[0x08],
                       sizeof(timing_commander) - 0x08);
-#else
-  ext_clock_read_reg(0x0068, data, 4);
-  data[1] |= 0x8; // Set SYN_MODE
-  ext_clock_write_reg(0x0068, data, 4);
 
-  // Configure 'Digital PLL Input Control Register'
-  ext_clock_read_reg(0x0008, data, 9);
-  data[2] = (data[2] & ~0x03) | 0x1; // Force FREERUN
-  ext_clock_write_reg(0x0008, data, 9);
+  // Wait for external clock PLL to lock
+  ext_clock_wait_lock();
 
-  // Configure 'Output Clock Source Control Register'
-  ext_clock_read_reg(0x0063, data, 5);
-  data[0] |= 0x3; // CLK_SEL2 = Crystal input
-  ext_clock_write_reg(0x0063, data, 5);
-#endif
 
-  // Give the PLL time to acquire lock after configuration, then monitor
-  // the lock status forever.
+  // Pulse GT reset now that stable 148.5 MHz clock is present at its refclk
+  *R_GT_RESET = 1;
   long_delay();
-  ext_clock_monitor_lock();
+  *R_GT_RESET = 0;
+
+  // Wait for GT to enter locked and ready state
+  // 0x1 = tx_ready, 0x2 = tx_reset_done, 0x4 = userclk_active
+  uint32_t gt_status;
+  do {
+    gt_status = *R_GT_STATUS;
+    uart_print("gt_status = 0x%x", gt_status);
+  } while ((gt_status & 0x7) != 0x7);
 
   return 0;
 }

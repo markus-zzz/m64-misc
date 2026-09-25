@@ -36,8 +36,10 @@ module hdmi_gth_tx_top
     output wire        tmds_clk_p,
     output wire        tmds_clk_n,
 
-    output wire        tx_ready,            // GT TX reset done + userclk active
-    output wire        txusrclk2_out        // 37.125 MHz TX user clock
+    output wire        tx_ready,             // GT TX reset done + userclk active
+    output wire        tx_reset_done_out,    // gtwiz_reset_tx_done (incl. CPLL lock)
+    output wire        tx_userclk_active_out,// TX user clock network active
+    output wire        txusrclk2_out         // 37.125 MHz TX user clock
 );
     // -------------------------------------------------------------------------
     // Reference clock buffer.
@@ -151,6 +153,8 @@ module hdmi_gth_tx_top
     wire       gtwiz_userclk_tx_reset = ~(&gtpowergood);
 
     assign tx_ready = gtwiz_reset_tx_done & tx_userclk_active;
+    assign tx_reset_done_out    = gtwiz_reset_tx_done;
+    assign tx_userclk_active_out = tx_userclk_active;
 
     // -------------------------------------------------------------------------
     // GT core.

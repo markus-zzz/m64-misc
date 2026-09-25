@@ -34,6 +34,14 @@ module top(
   // pixel clock as 4x that with an MMCM so the symbol packer is phase-coherent.
   // ---------------------------------------------------------------------------
   wire        tx_ready;
+  wire        tx_reset_done;      // gtwiz_reset_tx_done (includes CPLL lock)
+  wire        tx_userclk_active;  // TX user clock network active
+  // CPU-controlled GT reset. The GT powers up before the CPU configures the
+  // 8T49N241, so it initially fails to lock (no valid refclk). Firmware pulses
+  // this after clock config so the GT re-runs its reset/lock sequence against
+  // a now-valid 148.5 MHz reference. Default asserted (hold GT in reset until
+  // firmware releases it).
+  logic       gt_reset = 1'b1;
   wire        txusrclk2;
   logic       clk_pixel;
 
@@ -134,7 +142,7 @@ module top(
     .mgtrefclk_p(hdmi_mgtrefclk_p),
     .mgtrefclk_n(hdmi_mgtrefclk_n),
     .freerun_clk(freerun_clk),
-    .reset(1'b0),
+    .reset(gt_reset),
     .clk_pixel(clk_pixel),
     .tmds_symbols(tmds_symbols),
     .tmds_data_p(hdmi_tx_p),
@@ -142,6 +150,8 @@ module top(
     .tmds_clk_p(hdmi_clk_p),
     .tmds_clk_n(hdmi_clk_n),
     .tx_ready(tx_ready),
+    .tx_reset_done_out(tx_reset_done),
+    .tx_userclk_active_out(tx_userclk_active),
     .txusrclk2_out(txusrclk2)
   );
 
@@ -211,14 +221,32 @@ module top(
       .mem_rdata(cpu_mem_rdata)
   );
 
+  // ---------------------------------------------------------------------------
+  // GT TX status, synchronized into the CPU clock domain for readback.
+  // These are level signals from the GT/txusrclk2 domain; a 2-FF synchronizer
+  // is sufficient. Readable at 0x2000_001C:
+  //   bit0 = tx_ready          (tx_reset_done & tx_userclk_active)
+  //   bit1 = tx_reset_done     (GT TX reset FSM done -> implies CPLL locked)
+  //   bit2 = tx_userclk_active (TX user clock network up)
+  // ---------------------------------------------------------------------------
+  logic [2:0] gt_stat_meta = 3'b0;
+  logic [2:0] gt_stat      = 3'b0;
+  always_ff @(posedge clk) begin
+    gt_stat_meta <= {tx_userclk_active, tx_reset_done, tx_ready};
+    gt_stat      <= gt_stat_meta;
+  end
+
   logic busy;
   always_comb begin
     casex (cpu_mem_addr)
       32'h0xxx_xxxx: cpu_mem_rdata = rom_rdata;
       32'h1xxx_xxxx: cpu_mem_rdata = ram_rdata;
-      32'h2xxx_xxx4: cpu_mem_rdata = {31'h0, busy};
-      32'h2xxx_xxx8: cpu_mem_rdata = {31'h0, clk_ctr_scl};
-      32'h2xxx_xxxc: cpu_mem_rdata = {31'h0, clk_ctr_sda};
+      // Peripheral registers: fully decode the low byte (no 'x' in the offset)
+      // so that e.g. 0x14/0x18/0x1c are not shadowed by 0x_4/0x_8/0x_c.
+      32'h2xxx_xx04: cpu_mem_rdata = {31'h0, busy};
+      32'h2xxx_xx08: cpu_mem_rdata = {31'h0, clk_ctr_scl};
+      32'h2xxx_xx0c: cpu_mem_rdata = {31'h0, clk_ctr_sda};
+      32'h2xxx_xx1c: cpu_mem_rdata = {29'h0, gt_stat}; // GT TX status bits
       default: cpu_mem_rdata = 0;
     endcase
   end
@@ -263,9 +291,7 @@ module top(
     end
   end
 
-  // Output UART on all four controller ports
-//  assign n64_ctrl_data = {4{uart_tx_shift[0]}};
-//  assign n64_ctrl_data = {4{hdmi_mgtrefclk_p}};
+  // Output UART and I2C on controller ports
   assign n64_ctrl_data = {clk_ctr_scl, clk_ctr_sda, {2{uart_tx_shift[0]}}};
 
   // External Clock control I2C
@@ -281,14 +307,14 @@ module top(
     if (rst) begin
       {r_clk_ctr_scl_oe, r_clk_ctr_scl} <= 0;
       {r_clk_ctr_sda_oe, r_clk_ctr_sda} <= 0;
+      gt_reset <= 1'b1; // hold GT in reset until firmware configures the clock
     end else if (cpu_mem_valid && cpu_mem_wstrb == 4'b1111) begin
       casex (cpu_mem_addr)
         32'h2000_0008:{r_clk_ctr_scl_oe, r_clk_ctr_scl} <= cpu_mem_wdata[1:0];
         32'h2000_000c:{r_clk_ctr_sda_oe, r_clk_ctr_sda} <= cpu_mem_wdata[1:0];
+        32'h2000_0024: gt_reset <= cpu_mem_wdata[0];
       endcase
     end
   end
 
 endmodule
-
-`default_nettype wire
