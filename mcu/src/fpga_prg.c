@@ -15,22 +15,14 @@ LOG_MODULE_REGISTER(m64_fpga, LOG_LEVEL_INF);
 
 static const struct gpio_dt_spec fpga_ss_boot_ctrl =
     GPIO_DT_SPEC_GET(DT_NODELABEL(fpga_ss_boot_ctrl), gpios);
-static const struct gpio_dt_spec fpga_init_b =
-    GPIO_DT_SPEC_GET(DT_NODELABEL(fpga_init_b), gpios);
+static const struct gpio_dt_spec fpga_init_b = GPIO_DT_SPEC_GET(DT_NODELABEL(fpga_init_b), gpios);
 static const struct gpio_dt_spec fpga_program_b =
     GPIO_DT_SPEC_GET(DT_NODELABEL(fpga_program_b), gpios);
-static const struct gpio_dt_spec fpga_done =
-    GPIO_DT_SPEC_GET(DT_NODELABEL(fpga_done), gpios);
-static const struct gpio_dt_spec flash_cs =
-    GPIO_DT_SPEC_GET(DT_NODELABEL(flash_cs), gpios);
+static const struct gpio_dt_spec fpga_done = GPIO_DT_SPEC_GET(DT_NODELABEL(fpga_done), gpios);
+static const struct gpio_dt_spec flash_cs = GPIO_DT_SPEC_GET(DT_NODELABEL(flash_cs), gpios);
 
-static const struct gpio_dt_spec fpga_cclk =
-    GPIO_DT_SPEC_GET(DT_NODELABEL(fpga_cclk), gpios);
-static const struct gpio_dt_spec fpga_din =
-    GPIO_DT_SPEC_GET(DT_NODELABEL(fpga_din), gpios);
-
-static const struct gpio_dt_spec fpga_rst =
-    GPIO_DT_SPEC_GET(DT_NODELABEL(fpga_rst), gpios);
+static const struct gpio_dt_spec fpga_cclk = GPIO_DT_SPEC_GET(DT_NODELABEL(fpga_cclk), gpios);
+static const struct gpio_dt_spec fpga_din = GPIO_DT_SPEC_GET(DT_NODELABEL(fpga_din), gpios);
 
 /*
  * ---------------------------------------------------------------------------
@@ -65,8 +57,7 @@ void fpga_setup_pins(void) {
   (void)gpio_pin_configure_dt(&fpga_ss_boot_ctrl, GPIO_OUTPUT_ACTIVE);
   /* Set FPGA programming interface to inactive state (PROGRAM_B deasserted;
    * active-low + open-drain, so this drives the line physically high). */
-  (void)gpio_pin_configure_dt(&fpga_program_b,
-                              GPIO_OUTPUT_INACTIVE | GPIO_OPEN_DRAIN);
+  (void)gpio_pin_configure_dt(&fpga_program_b, GPIO_OUTPUT_INACTIVE | GPIO_OPEN_DRAIN);
   (void)gpio_pin_configure_dt(&fpga_init_b, GPIO_INPUT);
   (void)gpio_pin_configure_dt(&fpga_done, GPIO_INPUT);
 
@@ -74,7 +65,6 @@ void fpga_setup_pins(void) {
    * both idle low. This also enables the GPIOF port clock. */
   (void)gpio_pin_configure_dt(&fpga_cclk, GPIO_OUTPUT_INACTIVE);
   (void)gpio_pin_configure_dt(&fpga_din, GPIO_OUTPUT_INACTIVE);
-  (void)gpio_pin_configure_dt(&fpga_rst, GPIO_OUTPUT_INACTIVE);
 
   /* Deselect the config flash (CS# high) so it stays off the shared
    * CCLK/DIN bus. Active-low, so OUTPUT_INACTIVE drives PG12 high. */
@@ -170,8 +160,7 @@ static int fpga_program_path(const char *binpath) {
       fpga_bitbang_byte(cfg_buf[i]);
 
       /* Cheap periodic check (every 256 bytes). */
-      if (((i & 0xFF) == 0) && !init_b_dipped &&
-          gpio_pin_get_dt(&fpga_init_b) == 0) {
+      if (((i & 0xFF) == 0) && !init_b_dipped && gpio_pin_get_dt(&fpga_init_b) == 0) {
         init_b_dipped = true;
         LOG_WRN("INIT_B went LOW at ~%zu bytes "
                 "(FPGA flagged a config/CRC error - "
@@ -203,28 +192,21 @@ static int fpga_program_path(const char *binpath) {
       fpga_bitbang_byte(0xFF); /* 64 clocks per burst */
     }
     if (gpio_pin_get_dt(&fpga_done) == 1) {
-      LOG_INF("FPGA configured: DONE high after %d startup clocks",
-              (burst + 1) * 64);
-
-      // Apply core reset
-      (void)gpio_pin_configure_dt(&fpga_rst, GPIO_OUTPUT_ACTIVE);
-      k_msleep(1);
-      (void)gpio_pin_configure_dt(&fpga_rst, GPIO_OUTPUT_INACTIVE);
+      LOG_INF("FPGA configured: DONE high after %d startup clocks", (burst + 1) * 64);
 
       return 0;
     }
   }
 
-  LOG_ERR("FPGA config failed: DONE low (INIT_B=%d)",
-          gpio_pin_get_dt(&fpga_init_b));
+  LOG_ERR("FPGA config failed: DONE low (INIT_B=%d)", gpio_pin_get_dt(&fpga_init_b));
 
   return -EIO;
 }
 
-/* m64 fpga [path] [phase] : program the FPGA (Slave-Serial) from a .bin.
+/* m64 fpga program [path] : program the FPGA (Slave-Serial) from a .bin.
  *   phase 0 = sample on rising CCLK edge (default), 1 = falling edge.
  */
-static int cmd_m64_fpga(const struct shell *sh, size_t argc, char **argv) {
+static int cmd_fpga_prog(const struct shell *sh, size_t argc, char **argv) {
   const char *path = (argc > 1) ? argv[1] : "/SD:/fpga.bin";
   int rc;
 
@@ -239,7 +221,13 @@ static int cmd_m64_fpga(const struct shell *sh, size_t argc, char **argv) {
   return 0;
 }
 
-/* Attach "fpga" as a subcommand of the "m64" root command defined in main.c.
- * The parent's subcommand set is created there with SHELL_SUBCMD_SET_CREATE. */
-SHELL_SUBCMD_ADD((m64), fpga, NULL, "Program FPGA: fpga [path]", cmd_m64_fpga,
-                 1, 1);
+/* Distributed subcommand set for the "m64 fpga" command. This file owns the
+ * set; other translation units (e.g. fpga_spi.c) append their own children
+ * with SHELL_SUBCMD_ADD against parent (m64, fpga). The "fpga" node itself is
+ * attached to the "m64" root command defined in main.c. */
+SHELL_SUBCMD_SET_CREATE(m64_fpga_cmds, (m64, fpga));
+
+SHELL_SUBCMD_ADD((m64), fpga, &m64_fpga_cmds, "FPGA control.", NULL, 1, 0);
+
+/* m64 fpga program [path] : program the FPGA (Slave-Serial) from a .bin. */
+SHELL_SUBCMD_ADD((m64, fpga), program, NULL, "Program FPGA: program [path]", cmd_fpga_prog, 1, 1);

@@ -104,11 +104,6 @@
 			label = "FPGA DIN (PF1)";
 		};
 
-		fpga_rst: fpga_rst {
-			gpios = <&gpiof 6 GPIO_ACTIVE_HIGH>;
-			label = "FPGA DIN (PF6)";
-		};
-
 		/*
 		 * Config flash chip-select (PG12 = OCTOSPI2 NCS). The bitstream
 		 * flash shares the CCLK/DIN bus with the FPGA's Slave-Serial
@@ -232,5 +227,42 @@ zephyr_udc0: &usbotg_hs {
 	 * stable. Lower clk-div (toward 0) to go faster if margins allow. */
 	clk-div = <4>;
 	disk-name = "SD";
+	status = "okay";
+};
+
+/*
+ * Custom SPI/QSPI link to the FPGA over OCTOSPI1 (I/O port 1).
+ *
+ * The FPGA implements a custom SPI slave; the MCU drives it directly via the
+ * STM32 HAL (HAL_OSPI_*), not the Zephyr st,stm32-ospi-nor driver. Because no
+ * NOR child node is attached here, no flash driver binds to this controller,
+ * leaving the peripheral free for application-owned HAL transactions. This
+ * node exists to (a) mux the pins and (b) gate the peripheral clock via the
+ * standard Zephyr pinctrl/clock plumbing.
+ *
+ * Pin map (fixed by silicon on the H7A3 ZI package, I/O port 1):
+ *   CLK  = PF10          NCS  = PE11
+ *   IO0  = PF8           IO1  = PF9
+ *   IO2  = PF7           IO3  = PF6
+ *
+ * NOTE: IO0..IO3 are hard-mapped to PF8/PF9/PF7/PF6 (not PF6..PF9 in order).
+ * The FPGA slave must wire data[0..3] to PF8/PF9/PF7/PF6 respectively or the
+ * quad-phase bytes will be bit-scrambled.
+ *
+ * NOTE: PF6 was previously the (now removed) fpga_rst GPIO. It is reused here
+ * as OCTOSPI IO3, so the two functions are mutually exclusive.
+ *
+ * Kernel clock: PLL1_Q (see stm32h7a3.dtsi default: STM32_SRC_PLL1_Q
+ * OSPI_SEL(1)); with the current PLL1 tree that is 280 MHz. Pick the HAL
+ * ClockPrescaler in software for the SCLK your FPGA slave can meet.
+ */
+&octospi1 {
+	pinctrl-0 = <&octospim_p1_clk_pf10
+		     &octospim_p1_io0_pf8
+		     &octospim_p1_io1_pf9
+		     &octospim_p1_io2_pf7
+		     &octospim_p1_io3_pf6
+		     &octospim_p1_ncs_pe11>;
+	pinctrl-names = "default";
 	status = "okay";
 };

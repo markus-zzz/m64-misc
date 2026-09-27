@@ -56,8 +56,7 @@ static void cyccnt_enable(void) {
 /* Busy-wait for an exact number of CPU cycles using DWT->CYCCNT.
  * always_inline so it folds into the ITCM-resident caller (no separate
  * out-of-ITCM call in the timed path). */
-static inline __attribute__((always_inline)) void
-delay_cycles(uint32_t cycles) {
+static inline __attribute__((always_inline)) void delay_cycles(uint32_t cycles) {
   uint32_t start = DWT->CYCCNT;
 
   while ((DWT->CYCCNT - start) < cycles) {
@@ -81,8 +80,7 @@ delay_cycles(uint32_t cycles) {
  * Placed in ITCM (__itcm_section) so instruction fetches are zero-wait-state
  * and deterministic: executing from flash/cache can stall mid-pulse and
  * jitter the WS2812 bit timing. */
-__itcm_section static void ws2812_send_color(GPIO_TypeDef *port, unsigned pin,
-                                             uint32_t grb) {
+__itcm_section static void ws2812_send_color(GPIO_TypeDef *port, unsigned pin, uint32_t grb) {
   uint32_t set_mask = 1U << pin;
   uint32_t clr_mask = 1U << (pin + 16);
 

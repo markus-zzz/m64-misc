@@ -1,6 +1,6 @@
 MEMORY {
-    ROM (rx)  : ORIGIN = 0x00000000, LENGTH = 128K
-    RAM (rwx) : ORIGIN = 0x10000000 + 2K, LENGTH = 4K - 2K /* Skip first 2K for the OSD */
+    ROM (rx)  : ORIGIN = 0x00000000, LENGTH = 4K
+    RAM (rwx) : ORIGIN = 0x10000000, LENGTH = 4K
 }
 
 SECTIONS {

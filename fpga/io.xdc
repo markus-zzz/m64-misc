@@ -3,8 +3,6 @@ set_property BITSTREAM.GENERAL.COMPRESS True [current_design]
 set_property -dict { PACKAGE_PIN AB21 IOSTANDARD LVCMOS18 } [get_ports { clk_50mhz }];
 create_clock -add -name sys_clk_pin -period 20.00 -waveform {0 10} [get_ports { clk_50mhz }];
 
-set_property -dict { PACKAGE_PIN Y15 IOSTANDARD LVCMOS33 } [get_ports { rst_din }];
-
 set_property -dict { PACKAGE_PIN AE13 IOSTANDARD LVCMOS33 } [get_ports { n64_ctrl_data[0] }];
 set_property -dict { PACKAGE_PIN AD13 IOSTANDARD LVCMOS33 } [get_ports { n64_ctrl_data[1] }];
 set_property -dict { PACKAGE_PIN AE15 IOSTANDARD LVCMOS33 } [get_ports { n64_ctrl_data[2] }];
@@ -12,6 +10,13 @@ set_property -dict { PACKAGE_PIN AD15 IOSTANDARD LVCMOS33 } [get_ports { n64_ctr
 
 set_property -dict { PACKAGE_PIN AD25 IOSTANDARD LVCMOS18 } [get_ports { clk_ctr_scl }];
 set_property -dict { PACKAGE_PIN AD26 IOSTANDARD LVCMOS18 } [get_ports { clk_ctr_sda }];
+
+set_property -dict { PACKAGE_PIN AC13 IOSTANDARD LVCMOS33 } [get_ports { mcu_spi_clk }];
+set_property -dict { PACKAGE_PIN AB16 IOSTANDARD LVCMOS33 } [get_ports { mcu_spi_ncs }];
+set_property -dict { PACKAGE_PIN AC14 IOSTANDARD LVCMOS33 } [get_ports { mcu_spi_io[0] }];
+set_property -dict { PACKAGE_PIN AB15 IOSTANDARD LVCMOS33 } [get_ports { mcu_spi_io[1] }];
+set_property -dict { PACKAGE_PIN AA15 IOSTANDARD LVCMOS33 } [get_ports { mcu_spi_io[2] }];
+set_property -dict { PACKAGE_PIN  Y15 IOSTANDARD LVCMOS33 } [get_ports { mcu_spi_io[3] }];
 
 set_property -dict { PACKAGE_PIN J11 IOSTANDARD LVCMOS33 } [get_ports { hdmi_out_en }];
 set_property -dict { PACKAGE_PIN H13 IOSTANDARD LVCMOS33 } [get_ports { hdmi_tx0_oe }];
@@ -62,3 +67,11 @@ set_max_delay -datapath_only \
 # the metastability-hardening flop tolerates the crossing, so declare the path
 # false rather than let the tool try (and fail) to close it as synchronous.
 set_false_path -to [get_pins {gt_stat_meta_reg[*]/D}]
+
+# CPU reset crossing (sys_reg_ctrl[0] in clk_50mhz/sys_clk_pin -> clk_pixel),
+# a 2-FF synchronizer (rst_pixel_meta/rst_pixel_sync, ASYNC_REG). Bound the
+# source-to-first-sync-flop path as a datapath crossing so it is not timed as
+# a single-cycle inter-clock path.
+set_max_delay -datapath_only \
+  -from [get_cells {sys_reg_ctrl_reg[0]}] \
+  -to   [get_cells {rst_pixel_meta_reg}] 6.700

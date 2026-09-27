@@ -3,3 +3,7 @@
 
 config BOARD_M64
 	select SOC_STM32H7A3XX
+	# OCTOSPI1 to the FPGA is driven directly via the STM32 HAL from
+	# src/ospi.c (no Zephyr flash driver binds to the node), so the HAL
+	# OSPI module isn't auto-selected by a driver. Pull it in here.
+	select USE_STM32_HAL_OSPI

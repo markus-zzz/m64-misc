@@ -3,11 +3,14 @@
 
 module top(
   input wire clk_50mhz,
-  input wire rst_din,
   output logic [3:0] n64_ctrl_data,
   // CLOCK IC I2C
   inout wire clk_ctr_scl,
   inout wire clk_ctr_sda,
+  // MCU <-> FPGA SPI interface
+  input wire       mcu_spi_clk,
+  input wire       mcu_spi_ncs,
+  inout wire [3:0] mcu_spi_io,
   // HDMI retimer
   output wire hdmi_out_en, // Power
   output wire hdmi_tx0_oe,
@@ -19,6 +22,56 @@ module top(
   output wire       hdmi_clk_p,         // TMDS clock lane
   output wire       hdmi_clk_n
 );
+  // -------------------
+  // MCU SPI interface
+  // -------------------
+  logic [31:0] bus_addr;
+  logic [31:0] bus_rdata;
+  logic [31:0] bus_wdata;
+  logic        bus_ren;
+  logic        bus_wen;
+
+  spi_slave u_spi_slave (
+		.clk(clk_50mhz),
+    .spi_cs_n(mcu_spi_ncs),
+    .spi_clk(mcu_spi_clk),
+    .spi_miso(mcu_spi_io[1]),
+    .spi_mosi(mcu_spi_io[0]),
+    .bus_addr(bus_addr),
+    .bus_rdata(bus_rdata),
+    .bus_wdata(bus_wdata),
+    .bus_ren(bus_ren),
+    .bus_wen(bus_wen)
+  );
+
+  // sys_reg_ctrl[0] is the CPU reset (rst). Power-on/config value holds the
+  // CPU in reset until the MCU explicitly releases it by writing 0. Without a
+  // non-zero init the CPU is released the instant configuration completes,
+  // with no guaranteed reset pulse, so PicoRV32 never loads its PC.
+  logic [31:0] sys_reg_ctrl = 32'h0000_0001;
+  logic [31:0] app_reg_color;
+
+  always_ff @(posedge clk_50mhz) begin
+    if (bus_wen) begin
+      casex (bus_addr)
+        32'h1xxx_xx00: sys_reg_ctrl  <= bus_wdata;
+        32'h2xxx_xx10: app_reg_color <= bus_wdata;
+      endcase
+    end
+  end
+
+  // CPU ROM
+  spram #(
+      .ADDR_WIDTH(10),
+      .DATA_WIDTH(32)
+  ) u_scratch_ram (
+      .clk (clk),
+      .addr(bus_addr[31:2]),
+      .rd_data(bus_rdata),
+      .wr_data(bus_wdata),
+      .wr_en(bus_wen && (bus_addr[31:28] == 4'h3))
+  );
+
   // ---------------------------------------------------------------------------
   // Free-running clock (~25 MHz) for the GT reset controller / DRP, derived
   // from the 50 MHz board clock. Must be independent of the GT.
@@ -98,17 +151,12 @@ module top(
     end
   end
   assign clk_audio = clk_audio_r;
-  always_ff @(posedge clk_audio)
-    audio_sample_word <= '{audio_sample_word[1] + 16'd1, audio_sample_word[0] - 16'd1};
 
   logic [11:0] cx;
   logic [10:0] cy;
   logic [11:0] screen_width, frame_width;
   logic [10:0] screen_height, frame_height;
-  logic [23:0] rgb = 24'd0;
-
-  always_ff @(posedge clk_pixel)
-    rgb <= (cx[6:0] == 0) || (cy[5:0] == 0) ? 24'hff_ff_ff : 24'h0;
+  logic [23:0] rgb;
 
   logic [2:0] tmds_unused;
   logic       tmds_clock_unused;
@@ -154,14 +202,9 @@ module top(
     .txusrclk2_out(txusrclk2)
   );
 
-  logic [2:0] rst_sync;
-  always_ff @(posedge clk_50mhz) begin
-    rst_sync <= {rst_din, rst_sync[2:1]};
-  end
-
   logic clk, rst;
   assign clk = clk_50mhz;
-  assign rst = rst_sync[0];
+  assign rst = sys_reg_ctrl[0];
   // XXX: Put the entire CPU subsystem in its own module
   logic cpu_mem_valid;
   logic cpu_mem_instr;
@@ -175,7 +218,7 @@ module top(
 
   // CPU ROM
   spram #(
-      .ADDR_WIDTH(15),
+      .ADDR_WIDTH(10),
       .DATA_WIDTH(32),
       .INIT_FILE("/tmp/bios.vh")
   ) u_rom (
@@ -291,7 +334,7 @@ module top(
   end
 
   // Output UART and I2C on controller ports
-  assign n64_ctrl_data = {clk_ctr_scl, clk_ctr_sda, {2{uart_tx_shift[0]}}};
+  assign n64_ctrl_data = {mcu_spi_clk, mcu_spi_ncs, mcu_spi_io[0], uart_tx_shift[0]};
 
   // External Clock control I2C
   logic r_clk_ctr_scl;
@@ -318,5 +361,88 @@ module top(
 
   assign hdmi_out_en = 1'b1;
   assign hdmi_tx0_oe = 1'b1;
+
+  //
+  // Bouncing parrot
+  //
+
+  logic [10:0] image_pos_x;
+  logic [10:0] image_pos_y;
+  logic [10:0] image_dir_x;
+  logic [10:0] image_dir_y;
+
+  logic [23:0] rgb_array [0:128*128-1];
+  logic [13:0] rgb_array_idx;
+  logic [6:0] rgb_idx_h;
+  logic [6:0] rgb_idx_v;
+  logic [23:0] rgb_data;
+  assign rgb_idx_v = image_pos_y - cy;
+  assign rgb_idx_h = image_pos_x - cx;
+  assign rgb_data = rgb_array[rgb_array_idx];
+
+  always_ff @(posedge clk_pixel) begin
+    rgb_array_idx <= {rgb_idx_v, rgb_idx_h};
+
+    if ((cy > image_pos_y) && (cy <= image_pos_y + 128) && (cx > image_pos_x) && (cx <= image_pos_x + 128)) begin
+      // Draw image
+      rgb <= rgb_data;
+    end
+    else begin
+      rgb <= (cx[6:0] == 0) || (cy[6:0] == 0) ? app_reg_color[23:0] : 24'h0; // XXX: CDC
+    end
+  end
+
+  //
+  // Crap code to bounce image
+  //
+  // rst lives in the clk_50mhz domain; synchronize it into clk_pixel before
+  // using it as a reset here, otherwise it becomes an unconstrained inter-clock
+  // path (setup violation + reset-recovery/metastability hazard).
+  //
+  // ASYNC_REG keeps the two synchronizer stages as real, adjacently-placed
+  // flip-flops (prevents SRL inference and improves MTBF). The clk_50mhz ->
+  // rst_pixel_sync_meta crossing is declared as a max-delay/false path in the
+  // XDC so it is not timed as a single-cycle path.
+  (* ASYNC_REG = "TRUE" *) logic rst_pixel_meta = 1'b1;
+  (* ASYNC_REG = "TRUE" *) logic rst_pixel_sync = 1'b1;
+  always_ff @(posedge clk_pixel) begin
+    rst_pixel_meta <= rst;
+    rst_pixel_sync <= rst_pixel_meta;
+  end
+  wire rst_pixel = rst_pixel_sync;
+
+  always_ff @(posedge clk_pixel) begin
+    if (rst_pixel) begin
+      image_pos_x <= 0;
+      image_pos_y <= 0;
+      image_dir_x <= 1;
+      image_dir_y <= 1;
+    end
+    else if (cx == 0 && cy == 0) begin
+      if (image_dir_x == 1 && image_pos_x >= screen_width - 128) image_dir_x <= -1;
+      else if ($signed(image_dir_x) == -1 && image_pos_x == 0) image_dir_x <= 1;
+      else image_pos_x <= image_pos_x + image_dir_x;
+
+      if (image_dir_y == 1 && image_pos_y >= screen_height - 128) image_dir_y <= -1;
+      else if ($signed(image_dir_y) == -1 && image_pos_y == 0) image_dir_y <= 1;
+      else image_pos_y <= image_pos_y + image_dir_y;
+
+    end
+  end
+
+  initial begin
+    $readmemh("/tmp/parrot.dat", rgb_array);
+  end
+
+  logic [15:0] audio_array [0:16'hffff];
+  logic [15:0] audio_idx;
+  initial begin
+    $readmemh("/tmp/boing.dat", audio_array);
+  end
+
+  always_ff @(posedge clk_audio) begin
+    audio_sample_word <= {audio_array[audio_idx], audio_array[audio_idx]};
+    audio_idx <= audio_idx + 1;
+  end
 
 endmodule

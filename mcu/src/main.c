@@ -20,12 +20,11 @@ LOG_MODULE_REGISTER(m64, LOG_LEVEL_INF);
 
 void leds_setup_pins(void);
 void fpga_setup_pins(void);
+void fpga_spi_init(void);
 
 /* Board GPIO: VSYS LED enable (PG15, active-high). */
-static const struct gpio_dt_spec vsys_led_on =
-    GPIO_DT_SPEC_GET(DT_NODELABEL(vsys_led_on), gpios);
-static const struct gpio_dt_spec fpga_pwr_en =
-    GPIO_DT_SPEC_GET(DT_NODELABEL(fpga_pwr_en), gpios);
+static const struct gpio_dt_spec vsys_led_on = GPIO_DT_SPEC_GET(DT_NODELABEL(vsys_led_on), gpios);
+static const struct gpio_dt_spec fpga_pwr_en = GPIO_DT_SPEC_GET(DT_NODELABEL(fpga_pwr_en), gpios);
 
 /* FatFs mount for the SD card on SDMMC1 (disk-name "SD" from the DTS). */
 static FATFS fat_fs;
@@ -101,8 +100,7 @@ static int cmd_m64_sd_mount(const struct shell *sh, size_t argc, char **argv) {
   return 0;
 }
 
-static int cmd_m64_sd_unmount(const struct shell *sh, size_t argc,
-                              char **argv) {
+static int cmd_m64_sd_unmount(const struct shell *sh, size_t argc, char **argv) {
   ARG_UNUSED(argc);
   ARG_UNUSED(argv);
 
@@ -218,6 +216,7 @@ SHELL_CMD_REGISTER(m64, &m64_cmds, "M64 specific commands.", NULL);
 int main(void) {
   leds_setup_pins();
   fpga_setup_pins();
+  fpga_spi_init();
 
   /* Enable various power domains */
   (void)gpio_pin_configure_dt(&vsys_led_on, GPIO_OUTPUT_ACTIVE);
