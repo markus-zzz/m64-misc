@@ -1,5 +1,13 @@
 `default_nettype none
 
+// XXX: TODO: For now only supports bursts in the write direction. Should get
+// more elaborate handshake in place with bus_wreq / bus_wack and bus_rreq /
+// bus_rack so that the client has time to respond. If no response before next
+// SPI 32-bit data word comes a long set bit in error register indicating the
+// overrun/underrun.
+// Also would probably benefit from splitting the FSM implementation into an
+// always_ff and always_comb part.
+
 module spi_slave (
 	input wire clk,
   input wire spi_cs_n,
@@ -23,6 +31,7 @@ module spi_slave (
 
     state_t state;
     logic [5:0] cntr;
+    logic inc_addr;
 
     logic [15:0] reg_cmd;
     logic [31:0] reg_addr;
@@ -42,6 +51,12 @@ module spi_slave (
     always_ff @(posedge clk) begin
         bus_ren <= 0;
         bus_wen <= 0;
+        inc_addr <= 0;
+
+        if (inc_addr) begin
+          reg_addr <= reg_addr + 32'h4;
+        end
+
         if (spi_cs_n_sync[1]) begin
             state <= SPI_CMD;
             cntr <= 0;
@@ -75,7 +90,7 @@ module spi_slave (
                 if (cntr == 31) begin
                   bus_wen <= reg_cmd[15];
                   cntr <= 0;
-                  state <= SPI_DUMMY_1;
+                  inc_addr <= 1;
                 end
               end
               SPI_DUMMY_1: begin

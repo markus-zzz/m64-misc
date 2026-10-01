@@ -196,6 +196,89 @@ static int cmd_m64_sd_cat(const struct shell *sh, size_t argc, char **argv) {
   return rc;
 }
 
+/* Dispatch one line to the shell, skipping blanks and '#' comments. */
+static int source_run_line(const struct shell *sh, char *line) {
+  if (line[0] == '\0' || line[0] == '#') {
+    return 0;
+  }
+
+  int rc = shell_execute_cmd(sh, line);
+  if (rc != 0) {
+    shell_error(sh, "command failed (%d): %s", rc, line);
+  }
+  return rc;
+}
+
+/* Execute shell commands from a file, one command per line. Blank lines and
+ * lines beginning with '#' are ignored. Stops at the first failing command. */
+static int source_file(const struct shell *sh, const char *path) {
+  struct fs_file_t file;
+  static char line[128];
+  size_t len = 0;
+  char c;
+  ssize_t n;
+  int rc;
+
+  if (!sd_mounted) {
+    shell_error(sh, "SD not mounted (run 'm64 sd mount')");
+    return -ENODEV;
+  }
+
+  fs_file_t_init(&file);
+  rc = fs_open(&file, path, FS_O_READ);
+  if (rc < 0) {
+    shell_error(sh, "open(%s) failed (%d)", path, rc);
+    return rc;
+  }
+
+  /* No performance concern here, so just read a byte at a time and split
+   * on '\n' ('\r' is dropped so CRLF files work too). */
+  while ((n = fs_read(&file, &c, 1)) == 1) {
+    if (c == '\r') {
+      continue;
+    }
+
+    if (c == '\n') {
+      line[len] = '\0';
+      rc = source_run_line(sh, line);
+      if (rc != 0) {
+        goto out;
+      }
+      len = 0;
+      continue;
+    }
+
+    if (len >= sizeof(line) - 1) {
+      shell_error(sh, "line too long (max %zu)", sizeof(line) - 1);
+      rc = -EINVAL;
+      goto out;
+    }
+
+    line[len++] = c;
+  }
+
+  if (n < 0) {
+    shell_error(sh, "read failed (%d)", (int)n);
+    rc = (int)n;
+    goto out;
+  }
+
+  /* Handle a trailing line without a terminating newline. */
+  if (len > 0) {
+    line[len] = '\0';
+    rc = source_run_line(sh, line);
+  }
+
+out:
+  fs_close(&file);
+  return rc;
+}
+
+/* Execute shell commands from a file. Usage: source <path> */
+static int cmd_source(const struct shell *sh, size_t argc, char **argv) {
+  return source_file(sh, argv[1]);
+}
+
 SHELL_STATIC_SUBCMD_SET_CREATE(
     m64_sd_cmds, SHELL_CMD(mount, NULL, "Mount the SD card.", cmd_m64_sd_mount),
     SHELL_CMD(unmount, NULL, "Unmount the SD card.", cmd_m64_sd_unmount),
@@ -212,6 +295,8 @@ SHELL_SUBCMD_SET_CREATE(m64_cmds, (m64));
 SHELL_SUBCMD_ADD((m64), sd, &m64_sd_cmds, "SD card control.", NULL, 1, 0);
 
 SHELL_CMD_REGISTER(m64, &m64_cmds, "M64 specific commands.", NULL);
+
+SHELL_CMD_ARG_REGISTER(source, NULL, "source <path to .sh file>", cmd_source, 2, 0);
 
 int main(void) {
   leds_setup_pins();

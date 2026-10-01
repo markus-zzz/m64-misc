@@ -14,6 +14,7 @@
 #include <stdlib.h>
 #include <zephyr/device.h>
 #include <zephyr/drivers/pinctrl.h>
+#include <zephyr/fs/fs.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/shell/shell.h>
@@ -214,8 +215,39 @@ static int cmd_fpga_write32(const struct shell *sh, size_t argc, char **argv) {
   return 0;
 }
 
+static int cmd_fpga_write(const struct shell *sh, size_t argc, char **argv) {
+  uint32_t addr = (uint32_t)strtoul(argv[1], NULL, 0);
+  const char *path = argv[2];
+  struct fs_file_t file;
+  ssize_t n;
+  int rc;
+  static uint8_t buf[1024];
+
+  fs_file_t_init(&file);
+  rc = fs_open(&file, path, FS_O_READ);
+  if (rc < 0) {
+    shell_error(sh, "open(%s) failed (%d)", path, rc);
+    return rc;
+  }
+
+  while ((n = fs_read(&file, buf, sizeof(buf))) > 0) {
+    n = (n + 3) & ~3; // Round up to 32-bit multiple
+    rc = fpga_write(0x8000, addr, buf, n);
+    if (rc != 0) {
+      shell_error(sh, "write failed (%d)", rc);
+      return rc;
+    }
+    addr += n;
+  }
+
+  fs_close(&file);
+
+  return 0;
+}
+
 /* Attach read32/write32 as a children of the shared "m64 fpga" command. The
  * parent set (m64_fpga_cmds) is created in fpga_prg.c with
  * SHELL_SUBCMD_SET_CREATE. */
 SHELL_SUBCMD_ADD((m64, fpga), read32, NULL, "read32 <addr>", cmd_fpga_read32, 2, 0);
 SHELL_SUBCMD_ADD((m64, fpga), write32, NULL, "write32 <addr> <data>", cmd_fpga_write32, 3, 0);
+SHELL_SUBCMD_ADD((m64, fpga), write, NULL, "write <addr> <filepath>", cmd_fpga_write, 3, 0);

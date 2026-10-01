@@ -7,6 +7,9 @@ module top(
   // CLOCK IC I2C
   inout wire clk_ctr_scl,
   inout wire clk_ctr_sda,
+  // HDMI sink I2C
+  inout wire hdmi_ddc_i2c_scl,
+  inout wire hdmi_ddc_i2c_sca,
   // MCU <-> FPGA SPI interface
   input wire       mcu_spi_clk,
   input wire       mcu_spi_ncs,
@@ -54,7 +57,7 @@ module top(
   always_ff @(posedge clk_50mhz) begin
     if (bus_wen) begin
       casex (bus_addr)
-        32'h1xxx_xx00: sys_reg_ctrl  <= bus_wdata;
+        32'h1000_xx00: sys_reg_ctrl  <= bus_wdata;
         32'h2xxx_xx10: app_reg_color <= bus_wdata;
       endcase
     end
@@ -219,13 +222,13 @@ module top(
   // CPU ROM
   spram #(
       .ADDR_WIDTH(10),
-      .DATA_WIDTH(32),
-      .INIT_FILE("/tmp/bios.vh")
+      .DATA_WIDTH(32)
   ) u_rom (
       .clk (clk),
-      .addr(cpu_mem_addr[31:2]),
+      .addr(rst ? bus_addr[31:2] : cpu_mem_addr[31:2]),
       .rd_data(rom_rdata),
-      .wr_en(1'b0)
+      .wr_data({bus_wdata[7:0], bus_wdata[15:8], bus_wdata[23:16], bus_wdata[31:24]}),
+      .wr_en(bus_wen && (bus_addr[31:16] == 16'h1001))
   );
 
   // CPU RAM
@@ -286,8 +289,8 @@ module top(
       // Peripheral registers: fully decode the low byte (no 'x' in the offset)
       // so that e.g. 0x14/0x18/0x1c are not shadowed by 0x_4/0x_8/0x_c.
       32'h2xxx_xx04: cpu_mem_rdata = {31'h0, busy};
-      32'h2xxx_xx08: cpu_mem_rdata = {31'h0, clk_ctr_scl};
-      32'h2xxx_xx0c: cpu_mem_rdata = {31'h0, clk_ctr_sda};
+      32'h2xxx_xx08: cpu_mem_rdata = {30'h0, hdmi_ddc_i2c_scl, clk_ctr_scl};
+      32'h2xxx_xx0c: cpu_mem_rdata = {30'h0, hdmi_ddc_i2c_sca, clk_ctr_sda};
       32'h2xxx_xx1c: cpu_mem_rdata = {29'h0, gt_stat}; // GT TX status bits
       default: cpu_mem_rdata = 0;
     endcase
@@ -336,24 +339,28 @@ module top(
   // Output UART and I2C on controller ports
   assign n64_ctrl_data = {mcu_spi_clk, mcu_spi_ncs, mcu_spi_io[0], uart_tx_shift[0]};
 
-  // External Clock control I2C
-  logic r_clk_ctr_scl;
-  logic r_clk_ctr_sda;
-  logic r_clk_ctr_scl_oe;
-  logic r_clk_ctr_sda_oe;
+  // The two I2C registers cover SCL and SDA for up to 16 isolated I2C buses.
+  // The lower 16-bit of each register is push-buttons for driving 'Z' while the
+  // upper 16-bits are push-buttons for driving '0'. Pushing one button pops the
+  // other.
+  logic [15:0] r_clk_ctr_scl_0;
+  logic [15:0] r_clk_ctr_sda_0;
 
-  assign clk_ctr_scl = r_clk_ctr_scl_oe ? r_clk_ctr_scl : 1'bz;
-  assign clk_ctr_sda = r_clk_ctr_sda_oe ? r_clk_ctr_sda : 1'bz;
+  assign clk_ctr_scl = r_clk_ctr_scl_0[0] ? 1'b0 : 1'bz;
+  assign clk_ctr_sda = r_clk_ctr_sda_0[0] ? 1'b0 : 1'bz;
+
+  assign hdmi_ddc_i2c_scl = r_clk_ctr_scl_0[1] ? 1'b0 : 1'bz;
+  assign hdmi_ddc_i2c_sca = r_clk_ctr_sda_0[1] ? 1'b0 : 1'bz;
 
   always_ff @(posedge clk) begin
     if (rst) begin
-      {r_clk_ctr_scl_oe, r_clk_ctr_scl} <= 0;
-      {r_clk_ctr_sda_oe, r_clk_ctr_sda} <= 0;
+      r_clk_ctr_scl_0 <= 0;
+      r_clk_ctr_sda_0 <= 0;
       gt_reset <= 1'b1; // hold GT in reset until firmware configures the clock
     end else if (cpu_mem_valid && cpu_mem_wstrb == 4'b1111) begin
       casex (cpu_mem_addr)
-        32'h2000_0008:{r_clk_ctr_scl_oe, r_clk_ctr_scl} <= cpu_mem_wdata[1:0];
-        32'h2000_000c:{r_clk_ctr_sda_oe, r_clk_ctr_sda} <= cpu_mem_wdata[1:0];
+        32'h2000_0008:r_clk_ctr_scl_0 <= (r_clk_ctr_scl_0 & ~cpu_mem_wdata[15:0]) | cpu_mem_wdata[31:16];
+        32'h2000_000c:r_clk_ctr_sda_0 <= (r_clk_ctr_sda_0 & ~cpu_mem_wdata[15:0]) | cpu_mem_wdata[31:16];
         32'h2000_0024: gt_reset <= cpu_mem_wdata[0];
       endcase
     end
@@ -399,17 +406,8 @@ module top(
   // using it as a reset here, otherwise it becomes an unconstrained inter-clock
   // path (setup violation + reset-recovery/metastability hazard).
   //
-  // ASYNC_REG keeps the two synchronizer stages as real, adjacently-placed
-  // flip-flops (prevents SRL inference and improves MTBF). The clk_50mhz ->
-  // rst_pixel_sync_meta crossing is declared as a max-delay/false path in the
-  // XDC so it is not timed as a single-cycle path.
-  (* ASYNC_REG = "TRUE" *) logic rst_pixel_meta = 1'b1;
-  (* ASYNC_REG = "TRUE" *) logic rst_pixel_sync = 1'b1;
-  always_ff @(posedge clk_pixel) begin
-    rst_pixel_meta <= rst;
-    rst_pixel_sync <= rst_pixel_meta;
-  end
-  wire rst_pixel = rst_pixel_sync;
+  logic rst_pixel;
+  synch sync_rst_pixel(.i(rst), .o(rst_pixel), .clk(clk_pixel));
 
   always_ff @(posedge clk_pixel) begin
     if (rst_pixel) begin

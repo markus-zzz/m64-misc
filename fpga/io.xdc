@@ -11,6 +11,9 @@ set_property -dict { PACKAGE_PIN AD15 IOSTANDARD LVCMOS33 } [get_ports { n64_ctr
 set_property -dict { PACKAGE_PIN AD25 IOSTANDARD LVCMOS18 } [get_ports { clk_ctr_scl }];
 set_property -dict { PACKAGE_PIN AD26 IOSTANDARD LVCMOS18 } [get_ports { clk_ctr_sda }];
 
+set_property -dict { PACKAGE_PIN  J12 IOSTANDARD LVCMOS33 } [get_ports { hdmi_ddc_i2c_scl }];
+set_property -dict { PACKAGE_PIN  H12 IOSTANDARD LVCMOS33 } [get_ports { hdmi_ddc_i2c_sca }];
+
 set_property -dict { PACKAGE_PIN AC13 IOSTANDARD LVCMOS33 } [get_ports { mcu_spi_clk }];
 set_property -dict { PACKAGE_PIN AB16 IOSTANDARD LVCMOS33 } [get_ports { mcu_spi_ncs }];
 set_property -dict { PACKAGE_PIN AC14 IOSTANDARD LVCMOS33 } [get_ports { mcu_spi_io[0] }];

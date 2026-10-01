@@ -24,3 +24,15 @@ uart:~$ m64 fpga write32 0x20000010 0xffffff
 ```
 $ ffmpeg -i m64-hdmi.mkv -vf scale=-2:720 -c:v libx264 -crf 23 -c:a aac -movflags +faststart m64-hdmi.mp4
 ```
+
+## MCU to FPGA SPI protocol
+
+- 16-bit command
+- 32-bit address
+- 8-bit dummy
+- N x 32-bit data (total length given in command as well as byte strobe for last access, if write)
+
+## On Screen Display (OSD)
+
+- 64x32 characters one byte each 2KB screen RAM
+- 128 16x16 characters in 4KB bitmap RAM

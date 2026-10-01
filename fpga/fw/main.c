@@ -5,11 +5,16 @@
 volatile uint32_t *const R_UART_TX_DATA = (volatile uint32_t *)0x20000000;
 volatile uint32_t *const R_UART_TX_BUSY = (volatile uint32_t *)0x20000004;
 
-#define I2C_DRIVE_Z 0x0
-#define I2C_DRIVE_0 0x2
+// Push-button interface. A 32-bit register covers 16 I2C buses.
+#define I2C_DRIVE_Z 0x1
+#define I2C_DRIVE_0 0x10000
 
-volatile uint32_t *const R_I2C_SCL = (volatile uint32_t *)0x20000008; // {oe, scl}
-volatile uint32_t *const R_I2C_SDA = (volatile uint32_t *)0x2000000c; // {oe, sda}
+// The two I2C registers cover SCL and SDA for up to 16 isolated I2C buses.
+// The lower 16-bit of each register is push-buttons for driving 'Z' while the
+// upper 16-bits are push-buttons for driving '0'. Pushing one button pops the
+// other.
+volatile uint32_t *const R_I2C_SCL = (volatile uint32_t *)0x20000008;
+volatile uint32_t *const R_I2C_SDA = (volatile uint32_t *)0x2000000c;
 
 // GT TX status: bit0=tx_ready, bit1=tx_reset_done(->CPLL locked), bit2=userclk_active
 volatile uint32_t *const R_GT_STATUS = (volatile uint32_t *)0x2000001c;
@@ -23,26 +28,44 @@ static void uart_putchar(char c) {
   *R_UART_TX_DATA = c;
 }
 
-void uart_print(const char *fmt, ...) {
-  va_list ap;
-  va_start(ap, fmt);
+void uart_vprint(const char *fmt, va_list ap) {
   const char *p = fmt;
   while (*p != '\0') {
-    if (p[0] == '%' && p[1] == 'x') {
-      static const char hexdigits[] = "0123456789abcdef";
-      uint32_t arg = va_arg(ap, uint32_t);
-      for (unsigned i = 0; i < 32; i += 4) {
-        uart_putchar(hexdigits[(arg >> (28 - i)) & 0xf]);
-      }
+    if (p[0] == '%') {
+      unsigned digits = 8;
       p++;
+      if ('0' < p[0] && p[0] < '9') {
+        digits = p[0] - '0';
+        p++;
+      }
+      if (p[0] == 'x') {
+        static const char hexdigits[] = "0123456789abcdef";
+        uint32_t arg = va_arg(ap, uint32_t);
+        for (unsigned i = 0; i < digits; i++) {
+          uart_putchar(hexdigits[(arg >> ((digits - 1 - i) * 4)) & 0xf]);
+        }
+      }
     } else {
       uart_putchar(*p);
     }
     p++;
   }
+}
+
+void uart_print(const char *fmt, ...) {
+  va_list ap;
+  va_start(ap, fmt);
+  uart_vprint(fmt, ap);
   va_end(ap);
   uart_putchar('\r');
   uart_putchar('\n');
+}
+
+void uart_print_raw(const char *fmt, ...) {
+  va_list ap;
+  va_start(ap, fmt);
+  uart_vprint(fmt, ap);
+  va_end(ap);
 }
 
 void i2c_delay() {
@@ -50,107 +73,116 @@ void i2c_delay() {
     ;
 }
 
-void i2c_start() {
+struct i2c_dev {
+  uint8_t bus_idx; // Which I2C bus is device connected to
+  uint8_t addr;    // What address does it have on that bus (7-bit format)
+};
+
+const struct i2c_dev ext_clk_dev = {.bus_idx = 0, .addr = 0x7c};
+const struct i2c_dev hdmi_snk_edid_dev = {.bus_idx = 1, .addr = 0x50};
+
+void i2c_start(const struct i2c_dev *dev) {
   // Ensure both lines are released high, then pull SDA low while SCL is high
   // to generate the START condition. Works for both start and repeated start.
-  *R_I2C_SDA = I2C_DRIVE_Z;
-  *R_I2C_SCL = I2C_DRIVE_Z;
+  *R_I2C_SDA = (I2C_DRIVE_Z << dev->bus_idx);
+  *R_I2C_SCL = (I2C_DRIVE_Z << dev->bus_idx);
   i2c_delay();
-  *R_I2C_SDA = I2C_DRIVE_0; // SDA falling edge while SCL high => START
+  *R_I2C_SDA = (I2C_DRIVE_0 << dev->bus_idx); // SDA falling edge while SCL high => START
   i2c_delay();
-  *R_I2C_SCL = I2C_DRIVE_0; // Pull SCL low to prepare for first data bit
-  i2c_delay();
-}
-
-void i2c_stop() {
-  *R_I2C_SCL = I2C_DRIVE_0;
-  *R_I2C_SDA = I2C_DRIVE_0;
-  i2c_delay();
-  *R_I2C_SCL = I2C_DRIVE_Z;
-  i2c_delay();
-  *R_I2C_SDA = I2C_DRIVE_Z;
+  *R_I2C_SCL = (I2C_DRIVE_0 << dev->bus_idx); // Pull SCL low to prepare for first data bit
   i2c_delay();
 }
 
-uint8_t i2c_write_byte(uint8_t byte) {
+void i2c_stop(const struct i2c_dev *dev) {
+  *R_I2C_SCL = (I2C_DRIVE_0 << dev->bus_idx);
+  *R_I2C_SDA = (I2C_DRIVE_0 << dev->bus_idx);
+  i2c_delay();
+  *R_I2C_SCL = (I2C_DRIVE_Z << dev->bus_idx);
+  i2c_delay();
+  *R_I2C_SDA = (I2C_DRIVE_Z << dev->bus_idx);
+  i2c_delay();
+}
+
+uint8_t i2c_write_byte(const struct i2c_dev *dev, uint8_t byte) {
   for (int i = 0; i < 8; i++) {
-    *R_I2C_SCL = I2C_DRIVE_0;
+    *R_I2C_SCL = (I2C_DRIVE_0 << dev->bus_idx);
     i2c_delay();
-    *R_I2C_SDA = ((byte >> (7 - i)) & 1) ? I2C_DRIVE_Z : I2C_DRIVE_0;
+    *R_I2C_SDA =
+        ((byte >> (7 - i)) & 1) ? (I2C_DRIVE_Z << dev->bus_idx) : (I2C_DRIVE_0 << dev->bus_idx);
     i2c_delay();
-    *R_I2C_SCL = I2C_DRIVE_Z;
+    *R_I2C_SCL = (I2C_DRIVE_Z << dev->bus_idx);
     i2c_delay();
     i2c_delay();
   }
   // Get acknowledge from device
-  *R_I2C_SCL = I2C_DRIVE_0;
-  *R_I2C_SDA = I2C_DRIVE_Z;
+  *R_I2C_SCL = (I2C_DRIVE_0 << dev->bus_idx);
+  *R_I2C_SDA = (I2C_DRIVE_Z << dev->bus_idx);
   i2c_delay();
   i2c_delay();
-  *R_I2C_SCL = I2C_DRIVE_Z;
+  *R_I2C_SCL = (I2C_DRIVE_Z << dev->bus_idx);
   i2c_delay();
-  uint8_t ack = *R_I2C_SDA & 1;
-  *R_I2C_SCL = I2C_DRIVE_0; // Leave SCL low for a known state
+  uint8_t ack = (*R_I2C_SDA >> dev->bus_idx) & 1;
+  *R_I2C_SCL = (I2C_DRIVE_0 << dev->bus_idx); // Leave SCL low for a known state
   i2c_delay();
   return ack;
 }
 
-uint8_t i2c_read_byte(unsigned ack) {
+uint8_t i2c_read_byte(const struct i2c_dev *dev, unsigned ack) {
   uint8_t data = 0;
-  *R_I2C_SDA = I2C_DRIVE_Z;
+  *R_I2C_SDA = (I2C_DRIVE_Z << dev->bus_idx);
   for (int i = 0; i < 8; i++) {
-    *R_I2C_SCL = I2C_DRIVE_0;
+    *R_I2C_SCL = (I2C_DRIVE_0 << dev->bus_idx);
     i2c_delay();
-    *R_I2C_SCL = I2C_DRIVE_Z; // Release SCL high
+    *R_I2C_SCL = (I2C_DRIVE_Z << dev->bus_idx); // Release SCL high
     i2c_delay();
-    data |= (*R_I2C_SDA & 1) << (7 - i); // Sample SDA while SCL is high
+    data |= ((*R_I2C_SDA >> dev->bus_idx) & 1) << (7 - i); // Sample SDA while SCL is high
     i2c_delay();
   }
   // Send acknowledge to device
-  *R_I2C_SCL = I2C_DRIVE_0;
-  *R_I2C_SDA = ack ? I2C_DRIVE_0 : I2C_DRIVE_Z;
+  *R_I2C_SCL = (I2C_DRIVE_0 << dev->bus_idx);
+  *R_I2C_SDA = ack ? (I2C_DRIVE_0 << dev->bus_idx) : (I2C_DRIVE_Z << dev->bus_idx);
   i2c_delay();
   i2c_delay();
-  *R_I2C_SCL = I2C_DRIVE_Z;
+  *R_I2C_SCL = (I2C_DRIVE_Z << dev->bus_idx);
   i2c_delay();
   i2c_delay();
-  *R_I2C_SCL = I2C_DRIVE_0; // Leave SCL low for a known state
+  *R_I2C_SCL = (I2C_DRIVE_0 << dev->bus_idx); // Leave SCL low for a known state
   i2c_delay();
   return data;
 }
 
 int ext_clock_write_reg(uint16_t addr, const uint8_t *data, unsigned count) {
-  i2c_start();
+  i2c_start(&ext_clk_dev);
   unsigned nack = 0;
-  nack |= i2c_write_byte((0x7c << 1) | 0); // I2C address for write
-  nack |= i2c_write_byte(addr >> 8);       // MSB byte of addr
-  nack |= i2c_write_byte(addr & 0xff);     // LSB byte of addr
+  nack |= i2c_write_byte(&ext_clk_dev, (ext_clk_dev.addr << 1) | 0); // I2C address for write
+  nack |= i2c_write_byte(&ext_clk_dev, addr >> 8);                   // MSB byte of addr
+  nack |= i2c_write_byte(&ext_clk_dev, addr & 0xff);                 // LSB byte of addr
   for (unsigned i = 0; i < count; i++) {
-    nack |= i2c_write_byte(data[i]);
+    nack |= i2c_write_byte(&ext_clk_dev, data[i]);
   }
   if (nack) {
     uart_print("ext_clock_write_reg: NACK for addr 0x%x", addr);
   }
-  i2c_stop();
+  i2c_stop(&ext_clk_dev);
   return nack;
 }
 
 int ext_clock_read_reg(uint16_t addr, uint8_t *data, unsigned count) {
-  i2c_start();
+  i2c_start(&ext_clk_dev);
   unsigned nack = 0;
-  nack |= i2c_write_byte((0x7c << 1) | 0); // I2C address for write
-  nack |= i2c_write_byte(addr >> 8);       // MSB byte of addr
-  nack |= i2c_write_byte(addr & 0xff);     // LSB byte of addr
+  nack |= i2c_write_byte(&ext_clk_dev, (ext_clk_dev.addr << 1) | 0); // I2C address for write
+  nack |= i2c_write_byte(&ext_clk_dev, addr >> 8);                   // MSB byte of addr
+  nack |= i2c_write_byte(&ext_clk_dev, addr & 0xff);                 // LSB byte of addr
   if (nack) {
     uart_print("ext_clock_read_reg: NACK for addr 0x%x", addr);
   }
-  i2c_start();                     // Repeated Start
-  i2c_write_byte((0x7c << 1) | 1); // I2C address for read
+  i2c_start(&ext_clk_dev);                                   // Repeated Start
+  i2c_write_byte(&ext_clk_dev, (ext_clk_dev.addr << 1) | 1); // I2C address for read
   for (unsigned i = 0; i < count; i++) {
-    data[i] = i2c_read_byte(i < count - 1);
+    data[i] = i2c_read_byte(&ext_clk_dev, i < count - 1);
     // uart_print("addr: 0x%x data: 0x%x", addr + i, data[i]);
   }
-  i2c_stop();
+  i2c_stop(&ext_clk_dev);
   return nack;
 }
 
@@ -197,10 +229,35 @@ static void ext_clock_wait_lock(void) {
   }
 }
 
+int dump_hdmi_snk_edid(void) {
+  i2c_start(&hdmi_snk_edid_dev);
+  unsigned nack = 0;
+  nack |= i2c_write_byte(&hdmi_snk_edid_dev,
+                         (hdmi_snk_edid_dev.addr << 1) | 0); // I2C address for write
+  nack |= i2c_write_byte(&hdmi_snk_edid_dev, 0);             // Offset byte
+  if (nack) {
+    uart_print("dump_hdmi_snk_edid: NACK for addr 0");
+  }
+  i2c_start(&hdmi_snk_edid_dev);                                         // Repeated Start
+  i2c_write_byte(&hdmi_snk_edid_dev, (hdmi_snk_edid_dev.addr << 1) | 1); // I2C address for read
+  uart_print_raw("EDID dump:");
+  unsigned count = 128;
+  for (unsigned i = 0; i < count; i++) {
+    uint8_t data = i2c_read_byte(&hdmi_snk_edid_dev, i < count - 1);
+    if (i % 16 == 0)
+      uart_print("");
+    uart_print_raw("%2x ", data);
+  }
+  uart_print("");
+  i2c_stop(&hdmi_snk_edid_dev);
+  return nack;
+}
+
 int main(void) {
 
-  *R_I2C_SCL = I2C_DRIVE_Z;
-  *R_I2C_SDA = I2C_DRIVE_Z;
+  // Drive Z on all I2C buses (i.e. let the pull-ups act)
+  *R_I2C_SCL = 0xffff;
+  *R_I2C_SDA = 0xffff;
 
   uart_print("---");
   uart_print("Hello from PicoRV32 inside the FPGA");
@@ -239,6 +296,8 @@ int main(void) {
     uart_print("gt_status = 0x%x", gt_status);
   } while ((gt_status & 0x7) != 0x7);
   uart_print("GT locked and ready");
+
+  dump_hdmi_snk_edid();
 
   return 0;
 }

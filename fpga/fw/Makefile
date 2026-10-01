@@ -1,6 +1,6 @@
 OBJS = main.o start.o
 
-all: bios.vh
+all: bios.bin
 
 main.o: main.c
 
@@ -16,8 +16,5 @@ bios.elf: $(OBJS) system.ld
 bios.bin: bios.elf
 	llvm-objcopy --keep-section=.text --keep-section=.data --output-target=binary $< $@
 
-bios.vh: bios.bin
-	hexdump -v -e '4/4 "%08x " "\n"' $< > $@
-
 clean:
-	rm -f $(OBJS) bios.elf bios.bin bios.vh
+	rm -f $(OBJS) bios.elf bios.bin
