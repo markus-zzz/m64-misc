@@ -80,6 +80,7 @@ struct i2c_dev {
 
 const struct i2c_dev ext_clk_dev = {.bus_idx = 0, .addr = 0x7c};
 const struct i2c_dev hdmi_snk_edid_dev = {.bus_idx = 1, .addr = 0x50};
+const struct i2c_dev hdmi_snk_edid_seg_dev = {.bus_idx = 1, .addr = 0x30};
 
 void i2c_start(const struct i2c_dev *dev) {
   // Ensure both lines are released high, then pull SDA low while SCL is high
@@ -229,28 +230,44 @@ static void ext_clock_wait_lock(void) {
   }
 }
 
-int dump_hdmi_snk_edid(void) {
-  i2c_start(&hdmi_snk_edid_dev);
+void dump_hdmi_snk_edid(void) {
+  //XXX: Extension count at Block 0 0x7e
   unsigned nack = 0;
-  nack |= i2c_write_byte(&hdmi_snk_edid_dev,
-                         (hdmi_snk_edid_dev.addr << 1) | 0); // I2C address for write
-  nack |= i2c_write_byte(&hdmi_snk_edid_dev, 0);             // Offset byte
-  if (nack) {
-    uart_print("dump_hdmi_snk_edid: NACK for addr 0");
-  }
-  i2c_start(&hdmi_snk_edid_dev);                                         // Repeated Start
-  i2c_write_byte(&hdmi_snk_edid_dev, (hdmi_snk_edid_dev.addr << 1) | 1); // I2C address for read
   uart_print_raw("EDID dump:");
-  unsigned count = 128;
-  for (unsigned i = 0; i < count; i++) {
-    uint8_t data = i2c_read_byte(&hdmi_snk_edid_dev, i < count - 1);
-    if (i % 16 == 0)
-      uart_print("");
-    uart_print_raw("%2x ", data);
+  for (unsigned j = 0; j < 2; j++) {
+    // XXX: Each segment has two 128-byte blocks
+    // Setup segment register
+    i2c_start(&hdmi_snk_edid_seg_dev); // Repeated Start
+    nack |= i2c_write_byte(&hdmi_snk_edid_seg_dev,
+                           (hdmi_snk_edid_seg_dev.addr << 1) | 0); // I2C address for write
+    nack |= i2c_write_byte(&hdmi_snk_edid_seg_dev, j);             // Segment
+    if (nack) {
+      uart_print("dump_hdmi_snk_edid_seg: NACK");
+      return;
+    }
+    i2c_stop(&hdmi_snk_edid_seg_dev);
+    // Extract one block
+    i2c_start(&hdmi_snk_edid_dev);
+    unsigned nack = 0;
+    nack |= i2c_write_byte(&hdmi_snk_edid_dev,
+                           (hdmi_snk_edid_dev.addr << 1) | 0); // I2C address for write
+    nack |= i2c_write_byte(&hdmi_snk_edid_dev, 0);             // Offset byte
+    if (nack) {
+      uart_print("dump_hdmi_snk_edid: NACK");
+      return;
+    }
+    i2c_start(&hdmi_snk_edid_dev);                                         // Repeated Start
+    i2c_write_byte(&hdmi_snk_edid_dev, (hdmi_snk_edid_dev.addr << 1) | 1); // I2C address for read
+    unsigned count = 256;
+    for (unsigned i = 0; i < count; i++) {
+      uint8_t data = i2c_read_byte(&hdmi_snk_edid_dev, i < count - 1);
+      if (i % 16 == 0)
+        uart_print("");
+      uart_print_raw("%2x ", data);
+    }
+    i2c_stop(&hdmi_snk_edid_dev);
   }
   uart_print("");
-  i2c_stop(&hdmi_snk_edid_dev);
-  return nack;
 }
 
 int main(void) {

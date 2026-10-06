@@ -201,3 +201,4 @@ Links to datasheets for all the major components of the board
 | 8T49N241-998NLGI  | Universal Frequency Translator          | [link](https://www.renesas.com/en/document/dst/8t49n241-datasheet) |
 | STM32H7A3ZIT6     | STM32 micro controller                  | [link](https://www.st.com/resource/en/datasheet/stm32h7a3zi.pdf) |
 | XCAU15P-2FFVB676E | Xilinx Artix UltraScale+ FPGA           | [link](https://www.xilinx.com/support/documentation/data_sheets/ds890-ultrascale-overview.pdf) |
+| APS256XXN-OB9-BG  | Double-Data-Rate OPI/HPI Xccela PSRAM   | [link](https://www.apmemory.com/en/downloadFiles/0324112221tz581562) |

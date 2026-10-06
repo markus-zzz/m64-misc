@@ -215,6 +215,28 @@ static int cmd_fpga_write32(const struct shell *sh, size_t argc, char **argv) {
   return 0;
 }
 
+static int cmd_fpga_read(const struct shell *sh, size_t argc, char **argv) {
+  uint32_t addr = (uint32_t)strtoul(argv[1], NULL, 0);
+  uint32_t len = (uint32_t)strtoul(argv[2], NULL, 0);
+  ssize_t rem = (len + 3) & ~3; // Round up to 32-bit multiple
+
+  while (rem > 0) {
+    uint32_t data;
+    size_t n = sizeof(data);
+    int rc = fpga_read(0x0000, addr, (uint8_t *)&data, sizeof(data));
+    if (rc != 0) {
+      shell_error(sh, "read failed (%d)", rc);
+      return rc;
+    }
+    data = BSWAP_32(data);
+    shell_print(sh, "addr=0x%08x data=0x%08x", addr, data);
+    addr += n;
+    rem -= n;
+  }
+
+  return 0;
+}
+
 static int cmd_fpga_write(const struct shell *sh, size_t argc, char **argv) {
   uint32_t addr = (uint32_t)strtoul(argv[1], NULL, 0);
   const char *path = argv[2];
@@ -250,4 +272,5 @@ static int cmd_fpga_write(const struct shell *sh, size_t argc, char **argv) {
  * SHELL_SUBCMD_SET_CREATE. */
 SHELL_SUBCMD_ADD((m64, fpga), read32, NULL, "read32 <addr>", cmd_fpga_read32, 2, 0);
 SHELL_SUBCMD_ADD((m64, fpga), write32, NULL, "write32 <addr> <data>", cmd_fpga_write32, 3, 0);
+SHELL_SUBCMD_ADD((m64, fpga), read, NULL, "read <addr> <length>", cmd_fpga_read, 3, 0);
 SHELL_SUBCMD_ADD((m64, fpga), write, NULL, "write <addr> <filepath>", cmd_fpga_write, 3, 0);
