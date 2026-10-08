@@ -316,5 +316,15 @@ int main(void) {
 
   dump_hdmi_snk_edid();
 
+  // Dump PSRAM Mode Registers (MR)
+  const unsigned mr_idxs[] = {0, 1, 2, 3, 4, 8};
+  for (unsigned ps_idx = 0; ps_idx < 4; ps_idx++) {
+    for (unsigned i = 0; i < sizeof(mr_idxs)/sizeof(mr_idxs[0]); i++) {
+      unsigned mr_idx = mr_idxs[i];
+      volatile uint32_t *addr = (volatile uint32_t *)(0x58000000 + 0x10000000 * ps_idx + 0x100 * mr_idx);
+      uart_print("PSRAM%1x: MR%1x: 0x%x", ps_idx, mr_idx, *addr);
+    }
+  }
+
   return 0;
 }

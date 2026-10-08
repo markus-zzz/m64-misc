@@ -23,6 +23,7 @@ read_verilog -sv $hdmi_srcs
 read_verilog -sv hdmi_gth_tx_wrapper.sv
 read_verilog -sv spram.sv
 read_verilog -sv spi_slow.sv
+read_verilog -sv psram_slow.sv
 read_verilog -sv top.sv
 read_verilog -sv utils.sv
 read_verilog     picorv32.v

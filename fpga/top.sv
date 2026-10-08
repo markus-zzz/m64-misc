@@ -14,6 +14,26 @@ module top(
   input wire       mcu_spi_clk,
   input wire       mcu_spi_ncs,
   inout wire [3:0] mcu_spi_io,
+  // PSRAM #0
+  output wire        ps0_cen,
+  output wire        ps0_clk,
+  inout  wire [1:0]  ps0_dqs,
+  inout  wire [15:0] ps0_dq,
+  // PSRAM #1
+  output wire        ps1_cen,
+  output wire        ps1_clk,
+  inout  wire [1:0]  ps1_dqs,
+  inout  wire [15:0] ps1_dq,
+  // PSRAM #2
+  output wire        ps2_cen,
+  output wire        ps2_clk,
+  inout  wire [1:0]  ps2_dqs,
+  inout  wire [15:0] ps2_dq,
+  // PSRAM #3
+  output wire        ps3_cen,
+  output wire        ps3_clk,
+  inout  wire [1:0]  ps3_dqs,
+  inout  wire [15:0] ps3_dq,
   // HDMI retimer
   output wire hdmi_out_en, // Power
   output wire hdmi_tx0_oe,
@@ -63,7 +83,7 @@ module top(
     end
   end
 
-  // CPU ROM
+  // Scratch RAM
   spram #(
       .ADDR_WIDTH(10),
       .DATA_WIDTH(32)
@@ -219,6 +239,15 @@ module top(
   logic [31:0] ram_rdata;
   logic [31:0] rom_rdata;
 
+  logic [31:0] psram_0_rdata;
+  logic [31:0] psram_1_rdata;
+  logic [31:0] psram_2_rdata;
+  logic [31:0] psram_3_rdata;
+  logic psram_0_ack;
+  logic psram_1_ack;
+  logic psram_2_ack;
+  logic psram_3_ack;
+
   // CPU ROM
   spram #(
       .ADDR_WIDTH(10),
@@ -292,6 +321,10 @@ module top(
       32'h2xxx_xx08: cpu_mem_rdata = {30'h0, hdmi_ddc_i2c_scl, clk_ctr_scl};
       32'h2xxx_xx0c: cpu_mem_rdata = {30'h0, hdmi_ddc_i2c_sca, clk_ctr_sda};
       32'h2xxx_xx1c: cpu_mem_rdata = {29'h0, gt_stat}; // GT TX status bits
+      32'h5xxx_xxxx: cpu_mem_rdata = psram_0_rdata;
+      32'h6xxx_xxxx: cpu_mem_rdata = psram_1_rdata;
+      32'h7xxx_xxxx: cpu_mem_rdata = psram_2_rdata;
+      32'h8xxx_xxxx: cpu_mem_rdata = psram_3_rdata;
       default: cpu_mem_rdata = 0;
     endcase
   end
@@ -303,6 +336,10 @@ module top(
         32'h0xxx_xxxx: cpu_mem_ready <= ~cpu_mem_ready & cpu_mem_valid;
         32'h1xxx_xxxx: cpu_mem_ready <= ~cpu_mem_ready & cpu_mem_valid;
         32'h2xxx_xxxx: cpu_mem_ready <= ~cpu_mem_ready & cpu_mem_valid;
+        32'h5xxx_xxxx: cpu_mem_ready <= psram_0_ack & cpu_mem_valid;
+        32'h6xxx_xxxx: cpu_mem_ready <= psram_1_ack & cpu_mem_valid;
+        32'h7xxx_xxxx: cpu_mem_ready <= psram_2_ack & cpu_mem_valid;
+        32'h8xxx_xxxx: cpu_mem_ready <= psram_3_ack & cpu_mem_valid;
         default:       cpu_mem_ready <= 0;
       endcase
     end
@@ -442,5 +479,69 @@ module top(
     audio_sample_word <= {audio_array[audio_idx], audio_array[audio_idx]};
     audio_idx <= audio_idx + 1;
   end
+
+  //
+  // PSRAMs
+  //
+  psram_slow psram_slow_0 (
+    .clk(clk),
+    .rst(rst),
+    // ---- BUS interface ----
+    .bus_addr(cpu_mem_addr),
+    .bus_wdata(),
+    .bus_rdata(psram_0_rdata),
+    .bus_ren(cpu_mem_valid && (cpu_mem_addr[31:28] == 4'h5)),
+    .bus_ack(psram_0_ack),
+    // ---- PSRAM pins ----
+    .ps_clk(ps0_clk),
+    .ps_cen(ps0_cen),
+    .ps_dq(ps0_dq[7:0]),
+    .ps_dqs(ps0_dqs[0])
+  );
+  psram_slow psram_slow_1 (
+    .clk(clk),
+    .rst(rst),
+    // ---- BUS interface ----
+    .bus_addr(cpu_mem_addr),
+    .bus_wdata(),
+    .bus_rdata(psram_1_rdata),
+    .bus_ren(cpu_mem_valid && (cpu_mem_addr[31:28] == 4'h6)),
+    .bus_ack(psram_1_ack),
+    // ---- PSRAM pins ----
+    .ps_clk(ps1_clk),
+    .ps_cen(ps1_cen),
+    .ps_dq(ps1_dq[7:0]),
+    .ps_dqs(ps1_dqs[0])
+  );
+  psram_slow psram_slow_2 (
+    .clk(clk),
+    .rst(rst),
+    // ---- BUS interface ----
+    .bus_addr(cpu_mem_addr),
+    .bus_wdata(),
+    .bus_rdata(psram_2_rdata),
+    .bus_ren(cpu_mem_valid && (cpu_mem_addr[31:28] == 4'h7)),
+    .bus_ack(psram_2_ack),
+    // ---- PSRAM pins ----
+    .ps_clk(ps2_clk),
+    .ps_cen(ps2_cen),
+    .ps_dq(ps2_dq[7:0]),
+    .ps_dqs(ps2_dqs[0])
+  );
+  psram_slow psram_slow_3 (
+    .clk(clk),
+    .rst(rst),
+    // ---- BUS interface ----
+    .bus_addr(cpu_mem_addr),
+    .bus_wdata(),
+    .bus_rdata(psram_3_rdata),
+    .bus_ren(cpu_mem_valid && (cpu_mem_addr[31:28] == 4'h8)),
+    .bus_ack(psram_3_ack),
+    // ---- PSRAM pins ----
+    .ps_clk(ps3_clk),
+    .ps_cen(ps3_cen),
+    .ps_dq(ps3_dq[7:0]),
+    .ps_dqs(ps3_dqs[0])
+  );
 
 endmodule
