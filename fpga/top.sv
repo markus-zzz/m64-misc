@@ -1,7 +1,9 @@
 `default_nettype none
 
 
-module top(
+module top #(
+  parameter string BIOS_INIT_FILE = "bios.vh" // For simulation only (HW loads the BIOS via SPI)
+) (
   input wire clk_50mhz,
   output logic [3:0] n64_ctrl_data,
   // CLOCK IC I2C
@@ -251,7 +253,8 @@ module top(
   // CPU ROM
   spram #(
       .ADDR_WIDTH(10),
-      .DATA_WIDTH(32)
+      .DATA_WIDTH(32),
+      .INIT_FILE(BIOS_INIT_FILE) // For simulation only (HW loads the BIOS via SPI)
   ) u_rom (
       .clk (clk),
       .addr(rst ? bus_addr[31:2] : cpu_mem_addr[31:2]),
@@ -488,9 +491,10 @@ module top(
     .rst(rst),
     // ---- BUS interface ----
     .bus_addr(cpu_mem_addr),
-    .bus_wdata(),
+    .bus_wdata(cpu_mem_wdata),
     .bus_rdata(psram_0_rdata),
-    .bus_ren(cpu_mem_valid && (cpu_mem_addr[31:28] == 4'h5)),
+    .bus_wstrb(cpu_mem_wstrb),
+    .bus_valid(cpu_mem_valid && (cpu_mem_addr[31:28] == 4'h5)),
     .bus_ack(psram_0_ack),
     // ---- PSRAM pins ----
     .ps_clk(ps0_clk),
@@ -503,9 +507,10 @@ module top(
     .rst(rst),
     // ---- BUS interface ----
     .bus_addr(cpu_mem_addr),
-    .bus_wdata(),
+    .bus_wdata(cpu_mem_wdata),
     .bus_rdata(psram_1_rdata),
-    .bus_ren(cpu_mem_valid && (cpu_mem_addr[31:28] == 4'h6)),
+    .bus_wstrb(cpu_mem_wstrb),
+    .bus_valid(cpu_mem_valid && (cpu_mem_addr[31:28] == 4'h6)),
     .bus_ack(psram_1_ack),
     // ---- PSRAM pins ----
     .ps_clk(ps1_clk),
@@ -518,9 +523,10 @@ module top(
     .rst(rst),
     // ---- BUS interface ----
     .bus_addr(cpu_mem_addr),
-    .bus_wdata(),
+    .bus_wdata(cpu_mem_wdata),
     .bus_rdata(psram_2_rdata),
-    .bus_ren(cpu_mem_valid && (cpu_mem_addr[31:28] == 4'h7)),
+    .bus_wstrb(cpu_mem_wstrb),
+    .bus_valid(cpu_mem_valid && (cpu_mem_addr[31:28] == 4'h7)),
     .bus_ack(psram_2_ack),
     // ---- PSRAM pins ----
     .ps_clk(ps2_clk),
@@ -533,9 +539,10 @@ module top(
     .rst(rst),
     // ---- BUS interface ----
     .bus_addr(cpu_mem_addr),
-    .bus_wdata(),
+    .bus_wdata(cpu_mem_wdata),
     .bus_rdata(psram_3_rdata),
-    .bus_ren(cpu_mem_valid && (cpu_mem_addr[31:28] == 4'h8)),
+    .bus_wstrb(cpu_mem_wstrb),
+    .bus_valid(cpu_mem_valid && (cpu_mem_addr[31:28] == 4'h8)),
     .bus_ack(psram_3_ack),
     // ---- PSRAM pins ----
     .ps_clk(ps3_clk),

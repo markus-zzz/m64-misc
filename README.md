@@ -149,9 +149,9 @@ on the `DATA` pin of the controller ports.
 > offer absolutely no guarantee that it will always work. I.e. **do NOT do this
 > unless you know what you are doing**.
 
-# Insight
+## Insight
 
-## HDMI
+### HDMI
 
 The HDMI setup on the board is more sophisticated than I first anticipated.
 Proper, high performance, HDMI is usually done with licensed vendor IPs, the
@@ -190,6 +190,8 @@ are routed directly to the FPGA (and not the MCU).
 The plan is to use the above HDMI block from github but to replace the supplied
 serializer with GTH serializers running in RAW mode. That is the HDMI block
 already provide 8b/10b encoded symbols that are ready for serial transmit.
+
+### PSRAM
 
 ## Data sheets
 

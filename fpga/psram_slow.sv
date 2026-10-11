@@ -8,7 +8,8 @@ module psram_slow (
   input wire [31:0]   bus_addr,
   input wire [31:0]   bus_wdata,
   output logic [31:0] bus_rdata,
-  input wire          bus_ren,
+  input wire          bus_valid,
+  input wire    [3:0] bus_wstrb,
   output logic        bus_ack,
 
   // ---- PSRAM pins ----
@@ -70,7 +71,7 @@ module psram_slow (
   //
   // TX-path
   //
-  logic [7:0] tx_shift [0:7];
+  logic [7:0] tx_shift [0:7]; // XXX: Make this array a type
   logic [7:0] tx_load [0:7];
   logic       tx_load_en;
   logic       tx_load_rdy;
@@ -113,13 +114,13 @@ module psram_slow (
   end
 
 
-  typedef enum logic [2:0] {
-    S_INIT0, S_INIT1, S_GRST, S_IDLE, S_MODE_READ
+  typedef enum logic [3:0] {
+    S_INIT, S_GRST0, S_GRST1, S_IDLE, S_MODE_READ, S_MODE_WRITE, S_SYNC_READ, S_SYNC_WRITE, S_ACK, S_WAIT
   } state_t;
   state_t state, next_state;
 
   always_ff @(posedge clk) begin
-    if (rst) state <= S_INIT0;
+    if (rst) state <= S_INIT;
     else state <= next_state;
   end
 
@@ -133,31 +134,62 @@ module psram_slow (
     frame_tx_off_ = 0;
     frame_rx_on_ = 0;
     case (state)
-      S_INIT0: begin
+      S_INIT: begin
+        next_state = S_GRST0;
+      end
+      S_GRST0: begin
         tx_load_en = 1;
         tx_load = '{8'hff, 8'hff, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00};
         frame_len_ = 8;
         frame_tx_off_ = 8;
-        if (tx_load_rdy) next_state = S_GRST;
+        if (tx_load_rdy) next_state = S_GRST1;
       end
-      S_GRST: begin
+      S_GRST1: begin
         if (ps_cen) next_state = S_IDLE;
       end
       S_IDLE: begin
-        if (bus_ren & bus_addr[27]) begin
-          tx_load_en = 1;
-          tx_load = '{8'h40, 8'h40, 8'h00, 8'h00, 8'h00, bus_addr[15:8], 8'h00, 8'h00};
-          frame_len_ = 18;
-          frame_tx_off_ = 6;
-          frame_rx_on_ = 10;
-          if (tx_load_rdy) next_state = S_MODE_READ;
+        if (bus_valid) begin
+          if (|bus_wstrb) begin
+            next_state = bus_addr[27] ? S_MODE_WRITE : S_SYNC_WRITE;
+          end else begin
+            next_state = bus_addr[27] ? S_MODE_READ : S_SYNC_READ;
+          end
         end
       end
       S_MODE_READ: begin
+        tx_load_en = 1;
+        tx_load = '{8'h40, 8'h40, 8'h00, 8'h00, 8'h00, bus_addr[15:8], 8'h00, 8'h00};
+        frame_len_ = 18;
+        frame_tx_off_ = 6;
+        frame_rx_on_ = 10;
+// XXX: Instead we should count dqs transitions (the counter is outside so we
+// simply compare) and then terminate the transaction i.e. indicate that ps_cen
+// should be de-asserted.
+        if (tx_load_rdy) next_state = S_ACK;
+      end
+      S_MODE_WRITE: begin
+        tx_load_en = 1;
+        tx_load = '{8'hC0, 8'hC0, 8'h00, 8'h00, 8'h00, bus_addr[15:8], bus_wdata[7:0], 8'h00};
+        frame_len_ = 8;
+        frame_tx_off_ = 7;
+        frame_rx_on_ = 10;
+// XXX: Instead we should count dqs transitions (the counter is outside so we
+// simply compare) and then terminate the transaction i.e. indicate that ps_cen
+// should be de-asserted.
+        if (tx_load_rdy) next_state = S_ACK;
+      end
+      S_SYNC_READ: begin
+      end
+      S_SYNC_WRITE: begin
+      end
+      S_ACK: begin
         if (ps_cen) begin
           bus_ack = 1;
-          next_state = S_IDLE;
+          next_state = S_WAIT;
         end
+      end
+      S_WAIT: begin
+          next_state = S_IDLE;
       end
     endcase
   end

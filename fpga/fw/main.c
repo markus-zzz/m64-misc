@@ -230,7 +230,7 @@ static void ext_clock_wait_lock(void) {
   }
 }
 
-void dump_hdmi_snk_edid(void) {
+void hdmi_dump_snk_edid(void) {
   //XXX: Extension count at Block 0 0x7e
   unsigned nack = 0;
   uart_print_raw("EDID dump:");
@@ -268,6 +268,20 @@ void dump_hdmi_snk_edid(void) {
     i2c_stop(&hdmi_snk_edid_dev);
   }
   uart_print("");
+}
+
+void psram_dump_mode_regs() {
+  // Dump PSRAM Mode Registers (MR)
+  const unsigned mr_idxs[] = {0, 1, 2, 3, 4, 8};
+  for (unsigned ps_idx = 0; ps_idx < 4; ps_idx++) {
+    uart_print_raw("PSRAM%1x:", ps_idx);
+    for (unsigned i = 0; i < sizeof(mr_idxs)/sizeof(mr_idxs[0]); i++) {
+      unsigned mr_idx = mr_idxs[i];
+      volatile uint32_t *addr = (volatile uint32_t *)(0x58000000 + 0x10000000 * ps_idx + 0x100 * mr_idx);
+      uart_print_raw(" MR%1x=0x%2x", mr_idx, *addr >> 24);
+    }
+    uart_print("");
+  }
 }
 
 int main(void) {
@@ -313,18 +327,15 @@ int main(void) {
     uart_print("gt_status = 0x%x", gt_status);
   } while ((gt_status & 0x7) != 0x7);
   uart_print("GT locked and ready");
+  hdmi_dump_snk_edid();
 
-  dump_hdmi_snk_edid();
-
-  // Dump PSRAM Mode Registers (MR)
-  const unsigned mr_idxs[] = {0, 1, 2, 3, 4, 8};
-  for (unsigned ps_idx = 0; ps_idx < 4; ps_idx++) {
-    for (unsigned i = 0; i < sizeof(mr_idxs)/sizeof(mr_idxs[0]); i++) {
-      unsigned mr_idx = mr_idxs[i];
-      volatile uint32_t *addr = (volatile uint32_t *)(0x58000000 + 0x10000000 * ps_idx + 0x100 * mr_idx);
-      uart_print("PSRAM%1x: MR%1x: 0x%x", ps_idx, mr_idx, *addr);
-    }
-  }
+  psram_dump_mode_regs();
+  // XXX: Temporary set bit 5 of MR0 of PSRAM1 to enable fixed latency mode
+  volatile uint32_t *addr = (volatile uint32_t *)(0x58000000 + 0x10000000 * 1 + 0x100 * 0);
+  uint8_t mr0 = *addr >> 24;
+  mr0 |= 1 << 5;
+  *addr = mr0;
+  psram_dump_mode_regs();
 
   return 0;
 }

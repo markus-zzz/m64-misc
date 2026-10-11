@@ -126,23 +126,91 @@ def host_note(text):
             sys.stdout.flush()
 
 
+BY_ID_DIR = "/dev/serial/by-id"
+
+
+def resolve_mcu_device(spec):
+    """Resolve the MCU serial device to a *stable* path when possible.
+
+    The problem this solves: on `kernel reboot` the USB CDC-ACM device drops
+    and re-enumerates. If something still holds the old /dev/ttyACMn node open
+    at that instant, the kernel assigns the next free name (ttyACM0 -> ttyACM1),
+    so reopening a hard-coded ttyACMn fails. The /dev/serial/by-id/ symlink is
+    derived from the USB serial number and therefore stays constant across
+    re-enumeration, so we prefer it.
+
+    `spec` may be:
+      * a /dev/serial/by-id/... path  -> returned as-is (already stable)
+      * a /dev/ttyACMn path           -> mapped to its by-id symlink if one
+                                         exists, else returned unchanged
+      * "auto"                        -> auto-detect the ZEPHYR ModRetro M64
+                                         by-id symlink
+
+    Returns a device path (string). The returned by-id path is itself a
+    symlink that the OS re-resolves on every open(), so passing it to
+    open_port() after a reboot transparently follows the device.
+    """
+    # Explicit by-id path: trust it.
+    if spec != "auto" and spec.startswith(BY_ID_DIR):
+        return spec
+
+    # Build a map of real tty -> by-id symlink, plus the Zephyr/ModRetro one.
+    byid_for_tty = {}
+    zephyr_byid = None
+    try:
+        for name in os.listdir(BY_ID_DIR):
+            link = os.path.join(BY_ID_DIR, name)
+            try:
+                target = os.path.realpath(link)
+            except OSError:
+                continue
+            byid_for_tty[target] = link
+            if "ZEPHYR" in name or "ModRetro" in name:
+                zephyr_byid = link
+    except FileNotFoundError:
+        byid_for_tty = {}
+
+    if spec == "auto":
+        if zephyr_byid:
+            return zephyr_byid
+        # Fall back to the first ttyACM* if auto-detection found no symlink.
+        if os.path.exists("/dev/ttyACM0"):
+            return "/dev/ttyACM0"
+        return "/dev/ttyACM0"
+
+    # A concrete ttyACMn path: prefer its stable by-id symlink if present.
+    real = os.path.realpath(spec)
+    return byid_for_tty.get(real, spec)
+
+
 def open_port(device, baud):
-    """Open a serial port and return a (serial, fdpexpect.fdspawn) pair."""
+    """Open a serial port and return a (serial, fdpexpect.fdspawn) pair.
+
+    `device` may be a by-id symlink; the OS resolves it at open() time so the
+    same path keeps working after the USB device re-enumerates.
+    """
     ser = serial.Serial(device, baudrate=baud, timeout=0)
     spawn = fdpexpect.fdspawn(ser.fileno(), encoding=None)
     return ser, spawn
 
 
 def monitor_loop(label, spawn, stop_event):
-    """
+    r"""
     Passive drain: continuously pump bytes so that `logfile_read` fires.
 
     A never-matching pattern with a short timeout keeps data flowing into
     `logfile_read`, which does the actual printing.
+
+    NOTE: the sentinel must be `pexpect.TIMEOUT`, not a regex like r"\Z". In
+    bytes mode (`encoding=None`) the `\Z` anchor matches the empty string at
+    the end of pexpect's buffer *immediately*, so `expect` returns without ever
+    calling `read_nonblocking` - no bytes are pulled from the port and
+    `logfile_read` never fires. `pexpect.TIMEOUT` genuinely never matches, so
+    `expect` keeps reading (feeding `logfile_read`) until the timeout elapses.
     """
     while not stop_event.is_set():
         try:
-            spawn.expect(r"\Z", timeout=0.2)
+            spawn.expect(pexpect.TIMEOUT, timeout=0.2)
         except pexpect.TIMEOUT:
             pass
         except pexpect.EOF:
@@ -153,8 +221,43 @@ def monitor_loop(label, spawn, stop_event):
             break
 
 
+def _drain(spawn, settle=0.15):
+    """Consume whatever is currently in the serial/pexpect buffer.
+
+    pexpect's `expect` searches the *cumulative* buffer, so a prompt left over
+    from a previous command would make the next `expect(PROMPT)` return
+    immediately (matching stale text) instead of waiting for the new command to
+    finish. Draining first guarantees the subsequent prompt match corresponds
+    to the command we are about to send. `logfile_read` still prints anything
+    drained here, so no output is lost.
+    """
+    deadline = time.monotonic() + settle
+    while time.monotonic() < deadline:
+        try:
+            # Grab any pending bytes; non-empty read extends the window a bit.
+            data = spawn.read_nonblocking(size=4096, timeout=0.05)
+            if data:
+                deadline = time.monotonic() + settle
+        except pexpect.TIMEOUT:
+            break
+        except (pexpect.EOF, OSError):
+            break
+    # Reset pexpect's match buffer so no stale prompt lingers.
+    try:
+        spawn.buffer = spawn.buffer[:0]
+    except Exception:
+        pass
+
+
 def mcu_send(spawn, cmd, cmd_timeout, desc=None):
     """Send one MCU shell command and wait for the prompt to return.
+
+    The flow is: drain any stale buffer, send the command, wait for the shell
+    to echo it back (so we're synchronised past our own input), then wait for
+    the prompt that marks completion. Matching the echo first prevents an
+    earlier prompt sitting in the buffer from satisfying the prompt match
+    prematurely and firing the next command too soon (which overran the
+    device's shell RX ring buffer).
 
     Returns True on success, False on timeout/EOF/error.
     """
@@ -164,7 +267,16 @@ def mcu_send(spawn, cmd, cmd_timeout, desc=None):
     else:
         _annotate(spawn, f">>> {cmd}")
     try:
+        # Clear anything stale (e.g. the prompt we just synced to) first.
+        _drain(spawn)
         spawn.send(cmd.encode() + b"\r")
+        # Synchronise on the command echo so the following prompt match can
+        # only be the one that terminates *this* command.
+        try:
+            spawn.expect_exact(cmd.encode(), timeout=cmd_timeout)
+        except pexpect.TIMEOUT:
+            # Echo may be disabled or coalesced; fall through to prompt wait.
+            pass
         spawn.expect(prompt, timeout=cmd_timeout)
         return True
     except pexpect.TIMEOUT:
@@ -268,9 +380,15 @@ def fpga_sequence(spawn, args):
 
 
 def sync_prompt(spawn, timeout=10):
-    """Nudge the shell with CR and wait for the prompt. Returns True on sync."""
+    """Nudge the shell with CR and wait for the prompt. Returns True on sync.
+
+    Drains any stale buffer first so the prompt we match is the one produced
+    by *our* CR, not leftover text from before (which would make this report
+    success without the shell actually being responsive).
+    """
     prompt = PROMPT.encode()
     try:
+        _drain(spawn)
         spawn.send(b"\r")
         spawn.expect(prompt, timeout=timeout)
         return True
@@ -311,15 +429,19 @@ def reconnect_mcu(old_ser, old_spawn, args, use_color, deadline):
 
     host_note(f"waiting for MCU ({args.mcu}) to re-enumerate after reboot...")
     while time.monotonic() < deadline:
+        # Re-resolve every attempt: the by-id symlink is recreated by udev
+        # once the re-enumerated device is ready, and will point at whatever
+        # ttyACMn the kernel assigned (ttyACM0, ttyACM1, ...).
+        device = resolve_mcu_device(args.mcu)
         try:
-            ser, spawn = open_port(args.mcu, args.mcu_baud)
+            ser, spawn = open_port(device, args.mcu_baud)
         except (serial.SerialException, OSError):
             time.sleep(0.5)
             continue
         # Reattach the existing writer so the [ MCU] stream is continuous.
         spawn.logfile_read = label_writer or LabelWriter(
             "MCU", use_color=use_color)
-        host_note(f"MCU re-opened on {args.mcu}")
+        host_note(f"MCU re-opened on {device}")
         return ser, spawn
 
     host_note("ERROR: MCU did not re-enumerate before timeout")
@@ -398,8 +520,14 @@ def main():
         description="Interleaved serial monitor + MCU command driver for the "
                     "ModRetro M64 (MCU + FPGA)."
     )
-    parser.add_argument("--mcu", default="/dev/ttyACM0",
-                        help="MCU serial device (default: /dev/ttyACM0)")
+    parser.add_argument("--mcu", default="auto",
+                        help="MCU serial device. 'auto' (default) resolves the "
+                             "stable /dev/serial/by-id/ symlink for the ZEPHYR "
+                             "ModRetro M64 so the port is followed across "
+                             "reboot re-enumeration. May also be an explicit "
+                             "/dev/serial/by-id/... or /dev/ttyACMn path (a "
+                             "ttyACMn path is still mapped to its by-id symlink "
+                             "when one exists).")
     parser.add_argument("--fpga", default="/dev/ttyUSB0",
                         help="FPGA serial device (default: /dev/ttyUSB0)")
     parser.add_argument("--mcu-baud", type=int, default=115200,
@@ -442,8 +570,15 @@ def main():
     use_color = not args.no_color
     _HOST_WRITER = LabelWriter("HOST", use_color=use_color)
 
+    # Resolve the MCU spec ('auto' or a ttyACMn path) to a stable by-id symlink
+    # for the initial open. args.mcu is left as the original spec so the
+    # post-reboot reconnect can re-resolve it against the fresh symlink.
+    mcu_device = resolve_mcu_device(args.mcu)
+    if mcu_device != args.mcu:
+        _HOST_WRITER.note(f"MCU resolved: {args.mcu} -> {mcu_device}")
+
     ports = [
-        ("MCU", args.mcu, args.mcu_baud),
+        ("MCU", mcu_device, args.mcu_baud),
         ("FPGA", args.fpga, args.fpga_baud),
     ]
 
