@@ -85,7 +85,7 @@ module psram_model(
         ma = frame[5];
         $display(" [%m]: Mode Register Read accepted - MA=%h", ma);
         // read latency
-        repeat (LAT) @(posedge ps_clk);
+        repeat (LAT - 1) @(negedge ps_clk);
         // drive data: alternate addressed register and the next (MR1/MR2...)
         dev_drive = 1'b1; dev_dqs = 1'b0; // XXX:TODO: dqs should drop almost immediately after command
         # (ps_clk_half_period/2); // XXX: tDQSCK
@@ -105,12 +105,13 @@ module psram_model(
         addr = {frame[2], frame[3], frame[4], frame[5]};
         $display(" [%m]: Sync Write accepted - addr=%h", addr);
         // write latency
-        repeat (LAT) @(posedge ps_clk);
+        repeat (LAT - 1) @(negedge ps_clk);
         fork
           begin : datarun
             forever begin
               @(ps_clk)
               if (~ps_dqs) mem_array[addr] = ps_dq;
+              $display(" [%m]:  mem_array[%h] = %h", addr, mem_array[addr]);
               addr = addr + 1;
             end
           end
@@ -122,7 +123,7 @@ module psram_model(
         addr = {frame[2], frame[3], frame[4], frame[5]};
         $display(" [%m]: Sync Read accepted - addr=%h", addr);
         // read latency
-        repeat (LAT) @(posedge ps_clk);
+        repeat (LAT - 1) @(negedge ps_clk);
         // drive data
         dev_drive = 1'b1; dev_dqs = 1'b0; // XXX:TODO: dqs should drop almost immediately after command
         # (ps_clk_half_period/2); // XXX: tDQSCK
@@ -130,6 +131,7 @@ module psram_model(
           begin : datarun
             forever begin
               dev_dq  = mem_array[addr]; dev_dqs = ~dev_dqs; # (ps_clk_half_period);
+              $display(" [%m]:  mem_array[%h] = %h", addr, mem_array[addr]);
               addr = addr + 1;
             end
           end

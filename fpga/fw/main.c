@@ -2,6 +2,8 @@
 #include <stdarg.h>
 #include <stdint.h>
 
+#define MiB (1024 * 1024)
+
 volatile uint32_t *const R_UART_TX_DATA = (volatile uint32_t *)0x20000000;
 volatile uint32_t *const R_UART_TX_BUSY = (volatile uint32_t *)0x20000004;
 
@@ -231,7 +233,7 @@ static void ext_clock_wait_lock(void) {
 }
 
 void hdmi_dump_snk_edid(void) {
-  //XXX: Extension count at Block 0 0x7e
+  // XXX: Extension count at Block 0 0x7e
   unsigned nack = 0;
   uart_print_raw("EDID dump:");
   for (unsigned j = 0; j < 2; j++) {
@@ -275,13 +277,41 @@ void psram_dump_mode_regs() {
   const unsigned mr_idxs[] = {0, 1, 2, 3, 4, 8};
   for (unsigned ps_idx = 0; ps_idx < 4; ps_idx++) {
     uart_print_raw("PSRAM%1x:", ps_idx);
-    for (unsigned i = 0; i < sizeof(mr_idxs)/sizeof(mr_idxs[0]); i++) {
+    for (unsigned i = 0; i < sizeof(mr_idxs) / sizeof(mr_idxs[0]); i++) {
       unsigned mr_idx = mr_idxs[i];
-      volatile uint32_t *addr = (volatile uint32_t *)(0x58000000 + 0x10000000 * ps_idx + 0x100 * mr_idx);
+      volatile uint32_t *addr =
+          (volatile uint32_t *)(0x58000000 + 0x10000000 * ps_idx + 0x100 * mr_idx);
       uart_print_raw(" MR%1x=0x%2x", mr_idx, *addr >> 24);
     }
     uart_print("");
   }
+}
+
+void psram_test_array(uint32_t base, uint32_t size) {
+  uint32_t fn, fn_1, fn_2;
+  volatile uint32_t *p = (volatile uint32_t *)base;
+
+  // Write Fibonacci sequence
+  fn_1 = 1;
+  fn_2 = 1;
+  for (unsigned i = 0; i < size / sizeof(p[0]); i++) {
+    fn = fn_1 + fn_2;
+    p[i] = fn;
+    fn_2 = fn_1;
+    fn_1 = fn;
+  }
+  // Verify Fibonacci sequence
+  uint32_t errors = 0;
+  fn_1 = 1;
+  fn_2 = 1;
+  for (unsigned i = 0; i < size / sizeof(p[0]); i++) {
+    fn = fn_1 + fn_2;
+    if (p[i] != fn)
+      errors++;
+    fn_2 = fn_1;
+    fn_1 = fn;
+  }
+  uart_print("Verified PSRAM at base 0x%8x size 0x%x errors 0x%x", base, size, errors);
 }
 
 int main(void) {
@@ -318,7 +348,6 @@ int main(void) {
   *R_GT_RESET = 1;
   long_delay();
   *R_GT_RESET = 0;
-
   // Wait for GT to enter locked and ready state
   // 0x1 = tx_ready, 0x2 = tx_reset_done, 0x4 = userclk_active
   uint32_t gt_status;
@@ -330,12 +359,10 @@ int main(void) {
   hdmi_dump_snk_edid();
 
   psram_dump_mode_regs();
-  // XXX: Temporary set bit 5 of MR0 of PSRAM1 to enable fixed latency mode
-  volatile uint32_t *addr = (volatile uint32_t *)(0x58000000 + 0x10000000 * 1 + 0x100 * 0);
-  uint8_t mr0 = *addr >> 24;
-  mr0 |= 1 << 5;
-  *addr = mr0;
-  psram_dump_mode_regs();
+  psram_test_array(0x50000000, 32 * MiB);
+  psram_test_array(0x60000000, 32 * MiB);
+  psram_test_array(0x70000000, 32 * MiB);
+  psram_test_array(0x80000000, 64 * MiB);
 
   return 0;
 }

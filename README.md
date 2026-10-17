@@ -193,12 +193,30 @@ already provide 8b/10b encoded symbols that are ready for serial transmit.
 
 ### PSRAM
 
+The FPGA is directly connected to four PSRAM modules with a total capacity of
+160MB (3 x 32MB and 1 x 64MB). These are Double-Data-Rate OPI/HPI Xccela PSRAM
+modules clockable at 250MHz with a 16-bit interface, each giving a theoretical
+maximum throughput of 1GB/s. The four PSRAMs operate independently and will
+require to instantiate four PSRAM controllers inside the FPGA.
+
+To achieve high performance in a reliable way special SERDES primitives should
+be used. For the UltraScale+ these come in two forms Native Primitives and
+Component Primitives where the latter tries to achieve backwards compatibility
+with previous architecture families by wrapping the Native Primitives in
+familiar packages.
+
+Currently a simpler approach is taken and that is custom PSRAM controller based
+on oversampling with the obvious drawback of low performance. This however
+gives a vehicle to gain experience actually interfacing these memory modules in
+a simpler setting and hopefully be able to transfer those learnings to the high
+speed SERDES primitives.
+
 ## Data sheets
 
 Links to datasheets for all the major components of the board
 
-| Part number       | Description                             | Link |
-|-------------------|-----------------------------------------|----- |
+| Part number       | Description                             | Datasheet |
+|-------------------|-----------------------------------------|---------- |
 | SN75DP159RGZT     | TMDS to HDMI Level Shifter Retimer      | [link](http://ti.com/lit/ds/symlink/sn75dp159.pdf) |
 | 8T49N241-998NLGI  | Universal Frequency Translator          | [link](https://www.renesas.com/en/document/dst/8t49n241-datasheet) |
 | STM32H7A3ZIT6     | STM32 micro controller                  | [link](https://www.st.com/resource/en/datasheet/stm32h7a3zi.pdf) |

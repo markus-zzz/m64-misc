@@ -7,13 +7,13 @@
 #
 #   vivado -mode batch -source sim.tcl
 #
-# Waveforms and logs land in ./sim_proj/hdmi_sim.sim/.
+# Waveforms and logs land in ./sim_proj/full_sim.sim/.
 # -----------------------------------------------------------------------------
 set partName xcau15p-ffvb676-2-e
 set projDir  ./sim_proj
 
 file delete -force $projDir
-create_project hdmi_sim $projDir -part $partName -force
+create_project full_sim $projDir -part $partName -force
 
 # Design sources.
 add_files [glob ./hdmi/src/*.sv]
@@ -54,6 +54,6 @@ set_property verilog_define "BIOS_VH=\"$biosVh\"" [get_filesets sim_1]
 launch_simulation -simset sim_1 -mode behavioral
 # launch_simulation runs xsim; when the TB hits $finish it returns here.
 # The VCD is written to:
-#   sim_proj/hdmi_sim.sim/sim_1/behav/xsim/hdmi_gth_tx.vcd
+#   sim_proj/full_sim.sim/sim_1/behav/xsim/hdmi_gth_tx.vcd
 puts "SIMULATION RUN COMPLETE"
 quit
