@@ -153,6 +153,18 @@ on the `DATA` pin of the controller ports.
 
 ### HDMI
 
+#### Overview
+
+```mermaid
+flowchart LR
+    XTAL-->|40MHz| PLL
+    PLL-->|clk=148.5MHz| FPGA
+    FPGA-->|I2C| PLL[Prog. PLL]
+    FPGA-->|TMDS| Retimer[HDMI Retimer]
+    FPGA-->|I2C| Retimer
+    Retimer-->|TMDS| Receptable[HDMI Receptacle]
+```
+
 The HDMI setup on the board is more sophisticated than I first anticipated.
 Proper, high performance, HDMI is usually done with licensed vendor IPs, the
 licensing aspect is something that we for obvious reasons would like to avoid.
@@ -193,6 +205,16 @@ already provide 8b/10b encoded symbols that are ready for serial transmit.
 
 ### PSRAM
 
+#### Overview
+
+```mermaid
+flowchart LR
+    FPGA-->|"clk,ce#,dqs[1:0],dq[15:0]"| PSRAM0[PSRAM 32MB]
+    FPGA-->|"clk,ce#,dqs[1:0],dq[15:0]"| PSRAM1[PSRAM 32MB]
+    FPGA-->|"clk,ce#,dqs[1:0],dq[15:0]"| PSRAM2[PSRAM 32MB]
+    FPGA-->|"clk,ce#,dqs[1:0],dq[15:0]"| PSRAM3[PSRAM 64MB]
+```
+
 The FPGA is directly connected to four PSRAM modules with a total capacity of
 160MB (3 x 32MB and 1 x 64MB). These are Double-Data-Rate OPI/HPI Xccela PSRAM
 modules clockable at 250MHz with a 16-bit interface, each giving a theoretical
@@ -210,6 +232,21 @@ on oversampling with the obvious drawback of low performance. This however
 gives a vehicle to gain experience actually interfacing these memory modules in
 a simpler setting and hopefully be able to transfer those learnings to the high
 speed SERDES primitives.
+
+### USB
+
+#### Overview
+
+```mermaid
+graph LR
+    MCU  ---|ULPI| PHY[USB HS PHY]
+    MCU  ---|"D+,D-"| USB0("FullSpeed device<br/>USB-C receptacle")
+    PHY  ---|"D+,D-"| HUB("USB 2.0 HS Hub")
+    XTAL ---|"12MHz"| PHY
+    HUB  ---|"D+,D-"| USB1("HighSpeed host<br/>USB-C receptacle")
+    HUB  ---|"D+,D-"| USB2("HighSpeed host<br/>USB-C receptacle")
+```
+
 
 ## Data sheets
 
