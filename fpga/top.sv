@@ -241,11 +241,11 @@ module top #(
   logic [31:0] ram_rdata;
   logic [31:0] rom_rdata;
 
-  logic [31:0] psram_0_rdata;
+  wire  [31:0] psram_0_rdata;   // driven by fast psram_ctrl status assign
   logic [31:0] psram_1_rdata;
   logic [31:0] psram_2_rdata;
   logic [31:0] psram_3_rdata;
-  logic psram_0_ack;
+  wire         psram_0_ack;     // driven by fast psram_ctrl status assign
   logic psram_1_ack;
   logic psram_2_ack;
   logic psram_3_ack;
@@ -486,22 +486,173 @@ module top #(
   //
   // PSRAMs
   //
-  psram_slow psram_slow_0 (
-    .clk(clk),
-    .rst(rst),
-    // ---- BUS interface ----
-    .bus_addr(cpu_mem_addr),
-    .bus_wdata(cpu_mem_wdata),
-    .bus_rdata(psram_0_rdata),
-    .bus_wstrb(cpu_mem_wstrb),
-    .bus_valid(cpu_mem_valid && (cpu_mem_addr[31:28] == 4'h5)),
-    .bus_ack(psram_0_ack),
-    // ---- PSRAM pins ----
-    .ps_clk(ps0_clk),
-    .ps_cen(ps0_cen),
-    .ps_dq(ps0_dq[7:0]),
-    .ps_dqs(ps0_dqs[0])
+  // ---------------------------------------------------------------------------
+  // PSRAM #0 : native-BITSLICE fast controller (psram_ctrl + psram_phy_bg2).
+  //
+  // This is the revived "fast attempt" (B1). It replaces psram_slow on PSRAM0
+  // only; PSRAM1-3 remain on the proven slow controller below. The controller
+  // currently implements Global Reset + Mode Register Read (MRR). It is driven
+  // from a dedicated register window (base 0x4000_0000, see below) rather than
+  // the 0x5xxx_xxxx data-space mapping used by the slow controller, so the CPU
+  // bus at 0x5xxx_xxxx just gets a benign ack + status readback.
+  // ---------------------------------------------------------------------------
+
+  // Dedicated clocks for the PSRAM controller, from the 50 MHz board clock.
+  //   clk_sys    = 200 MHz -> CK = DQS = 200 MHz, data rate 400 Mb/s
+  //   clk_pllref = 100 MHz (PHY PLL reference + RIU + FIFO_RD_CLK)
+  //   VCO = 50 * 24 = 1200 MHz; /6 = 200 MHz, /12 = 100 MHz.
+  wire psram_clk_raw, psram_fifo_raw, psram_mmcm_fb, psram_mmcm_locked;
+  MMCME4_BASE #(
+    .CLKIN1_PERIOD(20.000),        // 50 MHz
+    .DIVCLK_DIVIDE(1),
+    .CLKFBOUT_MULT_F(24.000),      // VCO = 1200 MHz
+    .CLKOUT0_DIVIDE_F(6.000),      // 200 MHz (clk_sys / CK)
+    .CLKOUT0_DUTY_CYCLE(0.5),
+    .CLKOUT0_PHASE(0.0),
+    .CLKOUT1_DIVIDE(12),           // 100 MHz (FIFO_RD_CLK + PHY PLL ref)
+    .CLKOUT1_DUTY_CYCLE(0.5),
+    .CLKOUT1_PHASE(0.0)
+  ) psram_mmcm (
+    .CLKOUT0(psram_clk_raw), .CLKOUT0B(),
+    .CLKOUT1(psram_fifo_raw), .CLKOUT1B(),
+    .CLKOUT2(), .CLKOUT2B(), .CLKOUT3(), .CLKOUT3B(),
+    .CLKOUT4(), .CLKOUT5(), .CLKOUT6(),
+    .CLKFBOUT(psram_mmcm_fb), .CLKFBOUTB(),
+    .LOCKED(psram_mmcm_locked),
+    .CLKIN1(clk_50mhz),
+    .PWRDWN(1'b0), .RST(1'b0),
+    .CLKFBIN(psram_mmcm_fb)
   );
+
+  wire psram_clk, psram_fifo_clk;
+  BUFG bufg_psram (.I(psram_clk_raw),  .O(psram_clk));
+  BUFG bufg_psfifo(.I(psram_fifo_raw), .O(psram_fifo_clk));
+
+  // Controller reset: hold until the PSRAM MMCM locks, synchronised to the
+  // controller clock. Also forced by sys_reg_ctrl[0] (global soft reset).
+  logic [3:0] psram_rst_sync = 4'hF;
+  always_ff @(posedge psram_clk or negedge psram_mmcm_locked) begin
+    if (!psram_mmcm_locked)
+      psram_rst_sync <= 4'hF;
+    else
+      psram_rst_sync <= {psram_rst_sync[2:0], sys_reg_ctrl[0]};
+  end
+  wire psram_rst = psram_rst_sync[3];
+
+  // -------- Register-bus interface (clk_50mhz / bus_* domain) --------
+  // Write 0x4000_0000 : bit[0] = start (toggle), bits[15:8] = mode_addr,
+  //                     bit[1]=quiet bit[2]=ck_off bit[3]=loopback
+  //                     bit[4]=grst bit[5]=drive_hold bit[6]=ck_inv
+  // Write 0x4000_0008 : bits[8:0] = DQS centering tap (loaded on write)
+  // Write 0x4000_0010 : bits[7:0] = gate_start
+  // Write 0x4000_0014 : bits[7:0] = gate_len
+  // Write 0x4000_0018 : bits[8:0] = tx_tap (loaded on write)
+  // Write 0x4000_001C : bits[7:0] = loopback pattern
+  logic        mrr_start_lvl  = 1'b0;
+  logic [7:0]  mrr_mode_addr  = 8'h01;    // default MR1 (Vendor ID)
+  logic [8:0]  mrr_dqs_tap    = 9'd54;    // default ~typical Align_Delay
+  logic [7:0]  mrr_gate_start = 8'd4;     // default READ_LATENCY-1
+  logic        mrr_quiet      = 1'b0;
+  logic [7:0]  mrr_gate_len   = 8'd11;    // default READ_LATENCY+6
+  logic        mrr_ck_off     = 1'b0;
+  logic [8:0]  mrr_tx_tap     = 9'd0;
+  logic        mrr_loopback   = 1'b0;
+  logic        mrr_grst_lvl   = 1'b0;
+  logic        mrr_drive_hold = 1'b0;
+  logic        mrr_ck_inv     = 1'b0;
+  logic [7:0]  mrr_lb_pattern = 8'h3C;
+  logic        mrr_tx_tap_lvl = 1'b0;
+  logic        mrr_tap_lvl    = 1'b0;
+  always_ff @(posedge clk_50mhz) begin
+    if (bus_wen && (bus_addr == 32'h4000_0000)) begin
+      mrr_start_lvl  <= ~mrr_start_lvl;
+      mrr_mode_addr  <= bus_wdata[15:8];
+      mrr_quiet      <= bus_wdata[1];
+      mrr_ck_off     <= bus_wdata[2];
+      mrr_loopback   <= bus_wdata[3];
+      mrr_grst_lvl   <= mrr_grst_lvl ^ bus_wdata[4];
+      mrr_drive_hold <= bus_wdata[5];
+      mrr_ck_inv     <= bus_wdata[6];
+    end
+    if (bus_wen && (bus_addr == 32'h4000_0008)) begin
+      mrr_dqs_tap <= bus_wdata[8:0];
+      mrr_tap_lvl <= ~mrr_tap_lvl;
+    end
+    if (bus_wen && (bus_addr == 32'h4000_0010)) mrr_gate_start <= bus_wdata[7:0];
+    if (bus_wen && (bus_addr == 32'h4000_0014)) mrr_gate_len   <= bus_wdata[7:0];
+    if (bus_wen && (bus_addr == 32'h4000_001C)) mrr_lb_pattern <= bus_wdata[7:0];
+    if (bus_wen && (bus_addr == 32'h4000_0018)) begin
+      mrr_tx_tap     <= bus_wdata[8:0];
+      mrr_tx_tap_lvl <= ~mrr_tx_tap_lvl;
+    end
+  end
+
+  // Synchronise the toggles into psram_cmd_clk and edge-detect -> pulses.
+  wire psram_cmd_clk;            // 200 MHz PLL-derived, out of psram_ctrl
+  logic [2:0] start_sync, tap_sync, txtap_sync, grst_sync;
+  always_ff @(posedge psram_cmd_clk) begin
+    start_sync <= {start_sync[1:0], mrr_start_lvl};
+    tap_sync   <= {tap_sync[1:0],   mrr_tap_lvl};
+    txtap_sync <= {txtap_sync[1:0], mrr_tx_tap_lvl};
+    grst_sync  <= {grst_sync[1:0],  mrr_grst_lvl};
+  end
+  wire psram_start      = start_sync[2] ^ start_sync[1];
+  wire psram_tap_load   = tap_sync[2]   ^ tap_sync[1];
+  wire psram_txtap_load = txtap_sync[2] ^ txtap_sync[1];
+  wire psram_grst_req   = grst_sync[2]  ^ grst_sync[1];
+
+  wire        psram_init_ok, psram_busy, psram_done, psram_phy_ready;
+  wire [7:0]  psram_rd_reg;
+  wire [31:0] psram_rd_raw, psram_rd_dbg;
+  wire [8:0]  psram_tap_cur;
+  wire [255:0] psram_cap_words;
+
+  psram_ctrl #(.LOOPBACK("FALSE")) psram_ctrl_0 (
+    .clk_sys     (psram_clk),        // 200 MHz MMCM: PHY control/bring-up
+    .clk_cmd     (psram_cmd_clk),    // out: 200 MHz PLL-derived cmd clock
+    .clk_pll_ref (psram_fifo_clk),   // 100 MHz: PHY PLL reference
+    .riu_clk     (psram_fifo_clk),
+    .rst         (psram_rst),
+    .start       (psram_start),
+    .mode_addr   (mrr_mode_addr),
+    .dqs_tap     (mrr_dqs_tap),
+    .dqs_tap_load(psram_tap_load),
+    .dqs_tap_cur (psram_tap_cur),
+    .gate_start  (mrr_gate_start),
+    .gate_len    (mrr_gate_len),
+    .quiet       (mrr_quiet),
+    .ck_off      (mrr_ck_off),
+    .ck_inv      (mrr_ck_inv),
+    .tx_tap      (mrr_tx_tap),
+    .tx_tap_load (psram_txtap_load),
+    .grst_req    (psram_grst_req),
+    .init_ok     (psram_init_ok),
+    .loopback_en (mrr_loopback),
+    .lb_pattern  (mrr_lb_pattern),
+    .drive_hold  (mrr_drive_hold),
+    .cap_words   (psram_cap_words),
+    .busy        (psram_busy),
+    .done        (psram_done),
+    .rd_reg      (psram_rd_reg),
+    .rd_raw      (psram_rd_raw),
+    .rd_dbg      (psram_rd_dbg),
+    .phy_ready   (psram_phy_ready),
+    .ps_clk      (ps0_clk),
+    .ps_cen      (ps0_cen),
+    .ps_dqs      (ps0_dqs[0]),
+    .ps_dq       (ps0_dq[7:0])
+  );
+
+  // PSRAM0 status readback into the CPU data space (0x5xxx_xxxx). The fast
+  // controller is primarily driven via the 0x4000_xxxx register window above;
+  // this just gives the CPU bus a defined read value + ack so it never hangs.
+  //   0x5000_0000 : {rd_reg[7:0], 4'b0, init_ok, phy_ready, done, busy}
+  //   0x5000_0004 : rd_raw[31:0]
+  assign psram_0_rdata = (cpu_mem_addr == 32'h5000_0004) ? psram_rd_raw :
+                         {psram_rd_reg, 4'b0, psram_init_ok, psram_phy_ready,
+                          psram_done, psram_busy};
+  assign psram_0_ack   = cpu_mem_valid && (cpu_mem_addr[31:28] == 4'h5);
+
   psram_slow psram_slow_1 (
     .clk(clk),
     .rst(rst),

@@ -82,6 +82,7 @@ module psram_model(
       end
       8'h40: begin // Mode Register Read
         logic [7:0] ma;
+        logic [7:0] rspcntr;
         ma = frame[5];
         $display(" [%m]: Mode Register Read accepted - MA=%h", ma);
         // read latency
@@ -89,11 +90,14 @@ module psram_model(
         // drive data: alternate addressed register and the next (MR1/MR2...)
         dev_drive = 1'b1; dev_dqs = 1'b0; // XXX:TODO: dqs should drop almost immediately after command
         # (ps_clk_half_period/2); // XXX: tDQSCK
+        rspcntr = 0;
         fork
           begin : datarun
             forever begin
-              dev_dq  = mode_regs[ma]; dev_dqs = 1'b1; # (ps_clk_half_period);
-              dev_dq  = mode_regs[mode_adjs[ma]]; dev_dqs = 1'b0; # (ps_clk_half_period);
+//              dev_dq  = mode_regs[ma]; dev_dqs = 1'b1; # (ps_clk_half_period);
+//              dev_dq  = mode_regs[mode_adjs[ma]]; dev_dqs = 1'b0; # (ps_clk_half_period);
+              dev_dq  = rspcntr; rspcntr = rspcntr + 1; dev_dqs = 1'b1; # (ps_clk_half_period);
+              dev_dq  = rspcntr; rspcntr = rspcntr + 1; dev_dqs = 1'b0; # (ps_clk_half_period);
             end
           end
           begin @(posedge ps_cen); disable datarun; end
@@ -233,6 +237,31 @@ module tb_full;
     .ps_dq(ps3_dq)
   );
 
+  // -------- PSRAM register-bus write helper --------
+  // The fast PSRAM controller (PSRAM0) is driven from the 0x4000_xxxx register
+  // window on top's internal bus_* signals (normally sourced by the SPI slave).
+  // Here we drive them directly via force/release, one write per clk_50mhz.
+  //
+  // NOTE: xsim forbids a 'force' RHS from referencing an automatic variable, so
+  // the write payload is staged through these static tb-level regs first.
+  reg [31:0] ps_reg_addr;
+  reg [31:0] ps_reg_wdata;
+  task psram_reg_write(input [31:0] addr, input [31:0] data);
+    begin
+      @(negedge clk_50mhz);
+      ps_reg_addr  = addr;
+      ps_reg_wdata = data;
+      force dut.bus_addr  = ps_reg_addr;
+      force dut.bus_wdata = ps_reg_wdata;
+      force dut.bus_wen   = 1'b1;
+      @(negedge clk_50mhz);
+      force dut.bus_wen   = 1'b0;
+      release dut.bus_addr;
+      release dut.bus_wdata;
+      release dut.bus_wen;
+    end
+  endtask
+
   // -------- test sequence --------
   initial begin
     $dumpfile("tb_full.vcd");
@@ -246,6 +275,68 @@ module tb_full;
     // The GT reset (gt_reset) is normally released by firmware. Here we
     // release the GT directly so that it free-runs.
     force dut.gt_reset = 1'b0;
+
+    // Release the global soft reset the way firmware does on hardware: write 0
+    // to sys_reg_ctrl (0x1000_0000). sys_reg_ctrl[0] both is the CPU 'rst' and
+    // gates the fast PSRAM controller's reset chain (psram_rst_sync). Without
+    // this, psram_rst stays asserted and the PHY bring-up FSM never leaves
+    // B_RESET (observed: psram_rst=1 for the whole run).
+    psram_reg_write(32'h1000_0000, 32'h0000_0000);
+
+    // ---------------- PSRAM0 fast-controller exercise ----------------
+    // Wait for the PSRAM MMCM to lock and the PHY bring-up FSM to complete
+    // (phy_ready) and the device Phase-2 init (init_ok) to finish. The
+    // controller runs its own Global Reset automatically out of reset.
+    $display("[%0t] PSRAM: waiting for MMCM lock + phy_ready + init_ok", $time);
+    wait (dut.psram_mmcm_locked === 1'b1);
+    $display("[%0t] PSRAM: MMCM locked", $time);
+    // Probe PHY bring-up internals periodically so we can see where it stalls.
+    fork
+      begin : probe
+        repeat (10) begin
+          #1_000_000;
+          $display("[%0t] PSRAM PROBE: psram_rst=%b pll_locked=%b phy.bstate=%0d phy_ready=%b clkoutphyen=%b init_ok=%b",
+                   $time, dut.psram_rst, dut.psram_ctrl_0.phy.pll_locked,
+                   dut.psram_ctrl_0.phy.bstate, dut.psram_phy_ready,
+                   dut.psram_ctrl_0.phy.clkoutphyen, dut.psram_init_ok);
+        end
+      end
+    join_none
+    fork : wait_bringup
+      begin
+        wait (dut.psram_phy_ready === 1'b1);
+        $display("[%0t] PSRAM: phy_ready", $time);
+        wait (dut.psram_init_ok === 1'b1);
+        $display("[%0t] PSRAM: init_ok (device Phase-2 init done)", $time);
+      end
+      begin
+        // Don't hang the whole sim if bring-up never completes.
+        #20_000_000;
+        $display("[%0t] PSRAM: WARNING bring-up timeout (phy_ready=%b init_ok=%b)",
+                 $time, dut.psram_phy_ready, dut.psram_init_ok);
+      end
+    join_any
+    disable wait_bringup;
+
+    // Issue a Mode Register Read of MR1 (Vendor ID). mode_addr = 0x01 in
+    // bits[15:8]; bit[0] toggles the start request.
+    $display("[%0t] PSRAM: issuing MRR of MR1", $time);
+    psram_reg_write(32'h4000_0000, 32'h0000_0101);
+
+    // Wait for the controller to report done, then print the captured byte.
+    fork : wait_done
+      begin
+        wait (dut.psram_done === 1'b1);
+        $display("[%0t] PSRAM: MRR done - rd_reg=0x%02h rd_raw=0x%08h",
+                 $time, dut.psram_rd_reg, dut.psram_rd_raw);
+      end
+      begin
+        #10_000_000;
+        $display("[%0t] PSRAM: WARNING MRR timeout (busy=%b done=%b)",
+                 $time, dut.psram_busy, dut.psram_done);
+      end
+    join_any
+    disable wait_done;
 
     #100_000_000;
     $display("[%0t] absolute timeout - finishing", $time);
