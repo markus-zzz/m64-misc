@@ -359,10 +359,24 @@ int main(void) {
   hdmi_dump_snk_edid();
 
   psram_dump_mode_regs();
+// XXX: Speed up RAM test :)
+#undef MiB
+#define MiB 1024 * 32
   psram_test_array(0x50000000, 32 * MiB);
   psram_test_array(0x60000000, 32 * MiB);
   psram_test_array(0x70000000, 32 * MiB);
   psram_test_array(0x80000000, 64 * MiB);
+
+  uart_print(" ---- joybus ----");
+  volatile uint32_t *const R_JOYBUS = (volatile uint32_t *)0x90000000;
+  uint32_t prev_joybus = 0x12345789; // Unlikely value
+  while (1) {
+    uint32_t curr_joybus = *R_JOYBUS;
+    if (curr_joybus != prev_joybus) {
+      uart_print("\rjoybus: 0x%x", curr_joybus);
+      prev_joybus = curr_joybus;
+    }
+  }
 
   return 0;
 }

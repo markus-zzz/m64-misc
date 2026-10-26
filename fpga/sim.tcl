@@ -22,6 +22,7 @@ add_files ./picorv32.v
 add_files ./spram.sv
 add_files ./spi_slow.sv
 add_files ./psram_slow.sv
+add_files ./n64_ctrl.sv
 add_files ./utils.sv
 add_files ./top.sv
 

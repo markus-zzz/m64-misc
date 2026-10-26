@@ -5,7 +5,7 @@ module top #(
   parameter string BIOS_INIT_FILE = "bios.vh" // For simulation only (HW loads the BIOS via SPI)
 ) (
   input wire clk_50mhz,
-  output logic [3:0] n64_ctrl_data,
+  inout wire [3:0] n64_ctrl_data,
   // CLOCK IC I2C
   inout wire clk_ctr_scl,
   inout wire clk_ctr_sda,
@@ -313,6 +313,8 @@ module top #(
     gt_stat      <= gt_stat_meta;
   end
 
+  logic [31:0] joybus_rdata;
+
   logic busy;
   always_comb begin
     casex (cpu_mem_addr)
@@ -328,6 +330,7 @@ module top #(
       32'h6xxx_xxxx: cpu_mem_rdata = psram_1_rdata;
       32'h7xxx_xxxx: cpu_mem_rdata = psram_2_rdata;
       32'h8xxx_xxxx: cpu_mem_rdata = psram_3_rdata;
+      32'h9xxx_xxxx: cpu_mem_rdata = joybus_rdata;
       default: cpu_mem_rdata = 0;
     endcase
   end
@@ -343,6 +346,7 @@ module top #(
         32'h6xxx_xxxx: cpu_mem_ready <= psram_1_ack & cpu_mem_valid;
         32'h7xxx_xxxx: cpu_mem_ready <= psram_2_ack & cpu_mem_valid;
         32'h8xxx_xxxx: cpu_mem_ready <= psram_3_ack & cpu_mem_valid;
+        32'h9xxx_xxxx: cpu_mem_ready <= ~cpu_mem_ready & cpu_mem_valid;
         default:       cpu_mem_ready <= 0;
       endcase
     end
@@ -375,9 +379,6 @@ module top #(
       end
     end
   end
-
-  // Output UART and I2C on controller ports
-  assign n64_ctrl_data = {mcu_spi_clk, mcu_spi_ncs, mcu_spi_io[0], uart_tx_shift[0]};
 
   // The two I2C registers cover SCL and SDA for up to 16 isolated I2C buses.
   // The lower 16-bit of each register is push-buttons for driving 'Z' while the
@@ -550,5 +551,27 @@ module top #(
     .ps_dq(ps3_dq[7:0]),
     .ps_dqs(ps3_dqs[0])
   );
+
+  //
+  // N64 controllers (joybus)
+  //
+  wire joybus_1;
+  joybus_ctrl joybus (
+    .clk(clk),
+    .rst(rst),
+    // ---- BUS interface ----
+    .bus_addr(cpu_mem_addr),
+    .bus_rdata(joybus_rdata),
+    .bus_wdata(cpu_mem_wdata),
+    .bus_wstrb((cpu_mem_valid && cpu_mem_addr[31:28] == 4'h9) ? cpu_mem_wstrb : 4'b0000),
+    // ---- N64 controller pins ----
+    .joybus_io(joybus_1)
+  );
+
+  // Be careful to avoid merging 'inout' nets
+  logic joybus_1_ff;
+  always_ff @(posedge clk) joybus_1_ff <= n64_ctrl_data[1];
+
+  assign n64_ctrl_data = {mcu_spi_clk, joybus_1_ff, joybus_1, uart_tx_shift[0]};
 
 endmodule

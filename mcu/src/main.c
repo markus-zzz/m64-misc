@@ -25,6 +25,7 @@ void fpga_spi_init(void);
 /* Board GPIO: VSYS LED enable (PG15, active-high). */
 static const struct gpio_dt_spec vsys_led_on = GPIO_DT_SPEC_GET(DT_NODELABEL(vsys_led_on), gpios);
 static const struct gpio_dt_spec fpga_pwr_en = GPIO_DT_SPEC_GET(DT_NODELABEL(fpga_pwr_en), gpios);
+static const struct gpio_dt_spec aux_pwr_en = GPIO_DT_SPEC_GET(DT_NODELABEL(aux_pwr_en), gpios);
 
 /* FatFs mount for the SD card on SDMMC1 (disk-name "SD" from the DTS). */
 static FATFS fat_fs;
@@ -305,6 +306,7 @@ int main(void) {
 
   /* Enable various power domains */
   (void)gpio_pin_configure_dt(&vsys_led_on, GPIO_OUTPUT_ACTIVE);
+  (void)gpio_pin_configure_dt(&aux_pwr_en, GPIO_OUTPUT_ACTIVE);
   /* Now power the FPGA on with strap + config pins already stable. */
   (void)gpio_pin_configure_dt(&fpga_pwr_en, GPIO_OUTPUT_INACTIVE);
   (void)gpio_pin_set_dt(&fpga_pwr_en, 0);

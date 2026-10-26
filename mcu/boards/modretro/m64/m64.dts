@@ -53,6 +53,10 @@
 			gpios = <&gpioc 5 GPIO_ACTIVE_HIGH>;
 			label = "FPGA Power Enable (PC5)";
 		};
+		aux_pwr_en: aux_pwr_en {
+			gpios = <&gpioc 6 GPIO_ACTIVE_HIGH>;
+			label = "AUX Power Enable (PC6)";
+		};
 
 		// LEDs
 		ctrl_led_data_0: ctrl_led_data_0 {
