@@ -416,8 +416,16 @@ module top #(
 
   logic [10:0] image_pos_x;
   logic [10:0] image_pos_y;
-  logic [10:0] image_dir_x;
-  logic [10:0] image_dir_y;
+
+  always_ff @(posedge clk) begin
+    if (rst) begin
+    end else if (cpu_mem_valid && cpu_mem_wstrb == 4'b1111) begin
+      if (cpu_mem_addr == 32'h2001_0000) begin
+        image_pos_x <= cpu_mem_wdata[15:0];
+        image_pos_y <= cpu_mem_wdata[31:16];
+      end
+    end
+  end
 
   logic [23:0] rgb_array [0:128*128-1];
   logic [13:0] rgb_array_idx;
@@ -432,40 +440,10 @@ module top #(
     rgb_array_idx <= {rgb_idx_v, rgb_idx_h};
 
     if ((cy > image_pos_y) && (cy <= image_pos_y + 128) && (cx > image_pos_x) && (cx <= image_pos_x + 128)) begin
-      // Draw image
-      rgb <= rgb_data;
+      rgb <= rgb_data; // Draw image
     end
     else begin
       rgb <= (cx[6:0] == 0) || (cy[6:0] == 0) ? app_reg_color[23:0] : 24'h0; // XXX: CDC
-    end
-  end
-
-  //
-  // Crap code to bounce image
-  //
-  // rst lives in the clk_50mhz domain; synchronize it into clk_pixel before
-  // using it as a reset here, otherwise it becomes an unconstrained inter-clock
-  // path (setup violation + reset-recovery/metastability hazard).
-  //
-  logic rst_pixel;
-  synch sync_rst_pixel(.i(rst), .o(rst_pixel), .clk(clk_pixel));
-
-  always_ff @(posedge clk_pixel) begin
-    if (rst_pixel) begin
-      image_pos_x <= 0;
-      image_pos_y <= 0;
-      image_dir_x <= 1;
-      image_dir_y <= 1;
-    end
-    else if (cx == 0 && cy == 0) begin
-      if (image_dir_x == 1 && image_pos_x >= screen_width - 128) image_dir_x <= -1;
-      else if ($signed(image_dir_x) == -1 && image_pos_x == 0) image_dir_x <= 1;
-      else image_pos_x <= image_pos_x + image_dir_x;
-
-      if (image_dir_y == 1 && image_pos_y >= screen_height - 128) image_dir_y <= -1;
-      else if ($signed(image_dir_y) == -1 && image_pos_y == 0) image_dir_y <= 1;
-      else image_pos_y <= image_pos_y + image_dir_y;
-
     end
   end
 

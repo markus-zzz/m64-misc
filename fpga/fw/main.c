@@ -4,6 +4,9 @@
 
 #define MiB (1024 * 1024)
 
+#define MIN(a, b) ((a) < (b) ? (a) : (b))
+#define MAX(a, b) ((a) > (b) ? (a) : (b))
+
 volatile uint32_t *const R_UART_TX_DATA = (volatile uint32_t *)0x20000000;
 volatile uint32_t *const R_UART_TX_BUSY = (volatile uint32_t *)0x20000004;
 
@@ -359,6 +362,7 @@ int main(void) {
   hdmi_dump_snk_edid();
 
   psram_dump_mode_regs();
+
 // XXX: Speed up RAM test :)
 #undef MiB
 #define MiB 1024 * 32
@@ -368,14 +372,27 @@ int main(void) {
   psram_test_array(0x80000000, 64 * MiB);
 
   uart_print(" ---- joybus ----");
-  volatile uint32_t *const R_JOYBUS = (volatile uint32_t *)0x90000000;
-  uint32_t prev_joybus = 0x12345789; // Unlikely value
+  volatile uint32_t *R_JOYBUS = (volatile uint32_t *)0x90000000;
+  volatile uint32_t *R_SPRITE_POS = (volatile uint32_t *)0x20010000;
+  int32_t pos_x = 0, pos_y = 0;
   while (1) {
     uint32_t curr_joybus = *R_JOYBUS;
-    if (curr_joybus != prev_joybus) {
-      uart_print("\rjoybus: 0x%x", curr_joybus);
-      prev_joybus = curr_joybus;
-    }
+    int8_t joy_x = (curr_joybus >> 8) & 0xff;
+    int8_t joy_y = curr_joybus & 0xff;
+    uart_print("\rjoybus: 0x%8x x=%2x y=%2x", curr_joybus, joy_x, joy_y);
+
+    pos_x += joy_x << 12;
+    pos_x = MAX(0, pos_x);
+    pos_x = MIN(pos_x, (1920 - 128 - 1) << 16);
+    pos_y += -joy_y << 12;
+    pos_y = MAX(0, pos_y);
+    pos_y = MIN(pos_y, (1080 - 128 - 1) << 16);
+
+    int16_t pos_x_ = pos_x >> 16;
+    int16_t pos_y_ = pos_y >> 16;
+
+    uart_print("sprite_pos x=0x%x y=0x%x", pos_x_, pos_y_);
+    *R_SPRITE_POS = ((uint32_t)pos_y_ << 16) | pos_x_;
   }
 
   return 0;
