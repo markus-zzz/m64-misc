@@ -21,6 +21,7 @@ set hdmi_srcs [glob ./hdmi/src/*.sv]
 # Verilog defines are passed to synth_design below via -verilog_define.
 read_verilog -sv $hdmi_srcs
 read_verilog -sv hdmi_gth_tx_wrapper.sv
+read_verilog -sv dpram.sv
 read_verilog -sv spram.sv
 read_verilog -sv spi_slow.sv
 read_verilog -sv psram_slow.sv

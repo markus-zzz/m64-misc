@@ -75,12 +75,15 @@ module top #(
   // with no guaranteed reset pulse, so PicoRV32 never loads its PC.
   logic [31:0] sys_reg_ctrl = 32'h0000_0001;
   logic [31:0] app_reg_color;
+  logic [31:0] osd_ctrl;
+  logic osd_active, osd_pixel;
 
   always_ff @(posedge clk_50mhz) begin
     if (bus_wen) begin
       casex (bus_addr)
-        32'h1000_xx00: sys_reg_ctrl  <= bus_wdata;
-        32'h2xxx_xx10: app_reg_color <= bus_wdata;
+        32'h1000_xx00: sys_reg_ctrl <= bus_wdata;
+        32'h1002_0000: osd_ctrl <= bus_wdata;
+        32'h2000_xx10: app_reg_color <= bus_wdata;
       endcase
     end
   end
@@ -181,7 +184,7 @@ module top #(
   logic [10:0] cy;
   logic [11:0] screen_width, frame_width;
   logic [10:0] screen_height, frame_height;
-  logic [23:0] rgb;
+  logic [23:0] rgb, rgb_out;
 
   logic [2:0] tmds_unused;
   logic       tmds_clock_unused;
@@ -197,7 +200,7 @@ module top #(
     .clk_pixel(clk_pixel),
     .clk_audio(clk_audio),
     .reset(hdmi_reset),
-    .rgb(rgb),
+    .rgb(rgb_out),
     .audio_sample_word(audio_sample_word),
     .tmds(tmds_unused),
     .tmds_clock(tmds_clock_unused),
@@ -438,12 +441,20 @@ module top #(
 
   always_ff @(posedge clk_pixel) begin
     rgb_array_idx <= {rgb_idx_v, rgb_idx_h};
-
+    rgb <= 24'h0;
     if ((cy > image_pos_y) && (cy <= image_pos_y + 128) && (cx > image_pos_x) && (cx <= image_pos_x + 128)) begin
       rgb <= rgb_data; // Draw image
     end
     else begin
       rgb <= (cx[6:0] == 0) || (cy[6:0] == 0) ? app_reg_color[23:0] : 24'h0; // XXX: CDC
+    end
+  end
+
+  always_ff @(posedge clk_pixel) begin
+    rgb_out <= rgb;
+    if (osd_active) begin
+      rgb_out <= {2'h0, rgb[23:18], 2'h0, rgb[15:10], 2'h0, rgb[7:2]};
+      if (osd_pixel) rgb_out <= 24'hffffff;
     end
   end
 
@@ -551,5 +562,89 @@ module top #(
   always_ff @(posedge clk) joybus_1_ff <= n64_ctrl_data[1];
 
   assign n64_ctrl_data = {mcu_spi_clk, joybus_1_ff, joybus_1, uart_tx_shift[0]};
+
+  //
+  // On Screen Display (OSD) Overlay 64x32
+  //
+  localparam integer RES_X = 1920;
+  localparam integer RES_Y = 1080;
+  localparam integer OSD_W = 64*16;
+  localparam integer OSD_H = 32*16;
+
+  localparam integer BAR_WEST  = RES_X/2-OSD_W/2;
+  localparam integer BAR_EAST  = RES_X/2+OSD_W/2;
+  localparam integer BAR_NORTH = RES_Y/2-OSD_H/2;
+  localparam integer BAR_SOUTH = RES_Y/2+OSD_H/2;
+
+  logic [14:0] screen_pos, screen_pos_plus_one, screen_pos_prev;
+  logic screen_pos_inc;
+  logic [3:0] row;
+  logic osd_v_active, osd_h_active;
+  assign osd_active = osd_ctrl[0] & osd_v_active & osd_h_active;
+  assign screen_pos_plus_one = screen_pos + 1;
+  always @(posedge clk_pixel) begin
+    if (osd_active) screen_pos <= screen_pos_plus_one;
+
+    if (cx == BAR_WEST) begin
+      osd_h_active <= 1;
+    end else if (cx == BAR_EAST) begin
+      if (row == 15)  screen_pos_prev <= screen_pos_plus_one;
+      else screen_pos <= screen_pos_prev;
+      osd_h_active <= 0;
+      row <= row + 1;
+    end
+
+    if (cy == BAR_NORTH) begin
+      row <= 0;
+      osd_v_active <= 1;
+      screen_pos <= 0;
+      screen_pos_prev <= 0;
+    end else if (cy == BAR_SOUTH) begin
+      osd_v_active <= 0;
+    end
+  end
+
+  // Screen RAM 64x32x8 (2KB)
+  logic [31:0] screen_dword;
+  logic [7:0] screen_char;
+  logic [1:0] screen_char_idx;
+  always_ff @(posedge clk) screen_char_idx <= screen_pos[5:4];
+  assign screen_char = screen_dword[screen_char_idx*8+:8];
+  dpram #(
+    .ADDR_WIDTH(9),
+    .DATA_WIDTH(32)
+  ) u_osd_screen_ram (
+    .rd_clk(clk_pixel),
+    .rd_addr(screen_pos[14:6]),
+    .rd_data(screen_dword),
+    .wr_clk(clk),
+    .wr_addr(bus_addr[31:2]),
+    .wr_data(bus_wdata),
+    .wr_en(bus_wen && (bus_addr[31:16] == 16'h1000))
+  );
+  // Character Set RAM 128x16x16 (4KB)
+  logic [31:0] char_dword;
+  logic [15:0] char;
+  assign char = char_dword[row[0]*16+:16];
+  dpram #(
+    .ADDR_WIDTH(10),
+    .DATA_WIDTH(32)
+  ) u_osd_charset_ram (
+    .rd_clk(clk_pixel),
+    .rd_addr({screen_char, row[3:1]}),
+    .rd_data(char_dword),
+    .wr_clk(clk),
+    .wr_addr(bus_addr[31:2]),
+    .wr_data(bus_wdata),
+    .wr_en(bus_wen && (bus_addr[31:16] == 16'h1001))
+  );
+
+  logic [15:0] char_shift;
+  always_ff @(posedge clk_pixel) begin
+    if (screen_pos[3:0] == 4'h5) char_shift <= char;
+    else char_shift <= {char_shift[14:0], 1'b0};
+  end
+
+  always_ff @(posedge clk_pixel) osd_pixel <= osd_active & char_shift[15];
 
 endmodule

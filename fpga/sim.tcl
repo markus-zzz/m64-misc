@@ -19,6 +19,7 @@ create_project full_sim $projDir -part $partName -force
 add_files [glob ./hdmi/src/*.sv]
 add_files ./hdmi_gth_tx_wrapper.sv
 add_files ./picorv32.v
+add_files ./dpram.sv
 add_files ./spram.sv
 add_files ./spi_slow.sv
 add_files ./psram_slow.sv

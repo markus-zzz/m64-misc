@@ -164,7 +164,7 @@ module tb_full;
   wire hdmi_mgtrefclk_n = ~refclk;
 
   // -------- DUT I/O --------
-  logic [3:0] n64_ctrl_data;
+  wire  [3:0] n64_ctrl_data;
   wire  [2:0] hdmi_tx_p, hdmi_tx_n;
   wire        hdmi_clk_p, hdmi_clk_n;
 
