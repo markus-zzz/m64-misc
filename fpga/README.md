@@ -32,6 +32,16 @@ $ ffmpeg -i m64-hdmi.mkv -vf scale=-2:720 -c:v libx264 -crf 23 -c:a aac -movflag
 - 8-bit dummy
 - N x 32-bit data (total length given in command as well as byte strobe for last access, if write)
 
+Bus register map
+================
+
+| 0x1000_0000 | System ctrl (resets) |
+| 0x1000_0010 | OSD ctrl             |
+| 0x1001_0000 | RISC-V ROM           |
+| 0x1002_0000 | OSD Screen RAM       |
+| 0x1003_0000 | OSD Char RAM         |
+| 0x3000_0000 | Scratch RAM          |
+
 ## On Screen Display (OSD)
 
 - 64x32 characters one byte each 2KB screen RAM

@@ -16,6 +16,8 @@
 // approach could be to clear the CYCCNT at the start of the transfer and then
 // 'add up the hold points' so that they are in aboslute time.
 
+#include "leds.h"
+
 LOG_MODULE_REGISTER(m64_leds, LOG_LEVEL_INF);
 
 static const struct gpio_dt_spec ctrl_led_data_0 =

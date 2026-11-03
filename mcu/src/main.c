@@ -16,11 +16,12 @@
 #include <zephyr/sys/crc.h>
 #include <zephyr/version.h>
 
-LOG_MODULE_REGISTER(m64, LOG_LEVEL_INF);
+#include "fpga_prg.h"
+#include "fpga_spi.h"
+#include "leds.h"
+#include "osd.h"
 
-void leds_setup_pins(void);
-void fpga_setup_pins(void);
-void fpga_spi_init(void);
+LOG_MODULE_REGISTER(m64, LOG_LEVEL_INF);
 
 /* Board GPIO: VSYS LED enable (PG15, active-high). */
 static const struct gpio_dt_spec vsys_led_on = GPIO_DT_SPEC_GET(DT_NODELABEL(vsys_led_on), gpios);
@@ -316,6 +317,21 @@ int main(void) {
 
   /* Mount the SD card (non-fatal if absent). */
   (void)mount_sd();
+
+  /* Configure FPGA */
+  (void)fpga_program_path("/SD:/fpga.bin");
+
+  /* Load RISC-V firmware and boot */
+  (void)fpga_bus_write32(0x10000000, 1); // Assert RISC-V reset
+  (void)fpga_bus_write_file(0x10010000, "/SD:/bios.bin");
+  (void)fpga_bus_write32(0x10000000, 0); // Deassert RISC-V reset
+
+  /* Load OSD font */
+  (void)fpga_bus_write_file(0x10030000, "/SD:/font16x16.bin");
+
+  for (unsigned i = 0; i < 32; i++)
+    osd_printf(i, i, "Hello World OSD!!! %d", i);
+  osd_flush();
 
   /* Nothing else to do here: the interactive shell runs in its own
    * thread on the USB CDC-ACM console. */

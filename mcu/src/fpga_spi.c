@@ -20,6 +20,8 @@
 #include <zephyr/shell/shell.h>
 #include <zephyr/sys/byteorder.h>
 
+#include "fpga_spi.h"
+
 LOG_MODULE_REGISTER(m64_ospi, LOG_LEVEL_INF);
 
 #define OSPI_NODE DT_NODELABEL(octospi1)
@@ -188,6 +190,10 @@ static int fpga_write(uint16_t opcode, uint32_t addr, uint8_t *buf, size_t len) 
   return 0;
 }
 
+int fpga_bus_write(uint32_t addr, uint8_t *buf, size_t len) {
+  return fpga_write(0x8000, addr, buf, len);
+}
+
 static int cmd_fpga_read32(const struct shell *sh, size_t argc, char **argv) {
   uint32_t addr = (uint32_t)strtoul(argv[1], NULL, 0);
   uint32_t data;
@@ -202,11 +208,15 @@ static int cmd_fpga_read32(const struct shell *sh, size_t argc, char **argv) {
   return 0;
 }
 
+int fpga_bus_write32(uint32_t addr, uint32_t data) {
+  data = BSWAP_32(data);
+  return fpga_write(0x8000, addr, (uint8_t *)&data, sizeof(data));
+}
+
 static int cmd_fpga_write32(const struct shell *sh, size_t argc, char **argv) {
   uint32_t addr = (uint32_t)strtoul(argv[1], NULL, 0);
   uint32_t data = (uint32_t)strtoul(argv[2], NULL, 0);
-  data = BSWAP_32(data);
-  int rc = fpga_write(0x8000, addr, (uint8_t *)&data, sizeof(data));
+  int rc = fpga_bus_write32(addr, data);
   if (rc != 0) {
     shell_error(sh, "write failed (%d)", rc);
     return rc;
@@ -237,9 +247,7 @@ static int cmd_fpga_read(const struct shell *sh, size_t argc, char **argv) {
   return 0;
 }
 
-static int cmd_fpga_write(const struct shell *sh, size_t argc, char **argv) {
-  uint32_t addr = (uint32_t)strtoul(argv[1], NULL, 0);
-  const char *path = argv[2];
+int fpga_bus_write_file(uint32_t addr, const char *path) {
   struct fs_file_t file;
   ssize_t n;
   int rc;
@@ -248,7 +256,6 @@ static int cmd_fpga_write(const struct shell *sh, size_t argc, char **argv) {
   fs_file_t_init(&file);
   rc = fs_open(&file, path, FS_O_READ);
   if (rc < 0) {
-    shell_error(sh, "open(%s) failed (%d)", path, rc);
     return rc;
   }
 
@@ -256,13 +263,24 @@ static int cmd_fpga_write(const struct shell *sh, size_t argc, char **argv) {
     n = (n + 3) & ~3; // Round up to 32-bit multiple
     rc = fpga_write(0x8000, addr, buf, n);
     if (rc != 0) {
-      shell_error(sh, "write failed (%d)", rc);
       return rc;
     }
     addr += n;
   }
 
   fs_close(&file);
+
+  return 0;
+}
+static int cmd_fpga_write(const struct shell *sh, size_t argc, char **argv) {
+  uint32_t addr = (uint32_t)strtoul(argv[1], NULL, 0);
+  const char *path = argv[2];
+  int rc;
+  rc = fpga_bus_write_file(addr, path);
+  if (rc < 0) {
+    shell_error(sh, "open(%s) failed (%d)", path, rc);
+    return rc;
+  }
 
   return 0;
 }

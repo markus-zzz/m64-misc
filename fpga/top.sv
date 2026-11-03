@@ -74,16 +74,14 @@ module top #(
   // non-zero init the CPU is released the instant configuration completes,
   // with no guaranteed reset pulse, so PicoRV32 never loads its PC.
   logic [31:0] sys_reg_ctrl = 32'h0000_0001;
-  logic [31:0] app_reg_color;
   logic [31:0] osd_ctrl;
   logic osd_active, osd_pixel;
 
   always_ff @(posedge clk_50mhz) begin
     if (bus_wen) begin
       casex (bus_addr)
-        32'h1000_xx00: sys_reg_ctrl <= bus_wdata;
-        32'h1002_0000: osd_ctrl <= bus_wdata;
-        32'h2000_xx10: app_reg_color <= bus_wdata;
+        32'h1000_0000: sys_reg_ctrl <= bus_wdata;
+        32'h1000_0010: osd_ctrl <= bus_wdata;
       endcase
     end
   end
@@ -446,7 +444,7 @@ module top #(
       rgb <= rgb_data; // Draw image
     end
     else begin
-      rgb <= (cx[6:0] == 0) || (cy[6:0] == 0) ? app_reg_color[23:0] : 24'h0; // XXX: CDC
+      rgb <= (cx[6:0] == 0) || (cy[6:0] == 0) ? 24'hffffff : 24'h0;
     end
   end
 
@@ -608,8 +606,8 @@ module top #(
   logic [31:0] screen_dword;
   logic [7:0] screen_char;
   logic [1:0] screen_char_idx;
-  always_ff @(posedge clk) screen_char_idx <= screen_pos[5:4];
-  assign screen_char = screen_dword[screen_char_idx*8+:8];
+  always_ff @(posedge clk_pixel) screen_char_idx <= screen_pos[5:4];
+  assign screen_char = screen_dword[(3-screen_char_idx)*8+:8];
   dpram #(
     .ADDR_WIDTH(9),
     .DATA_WIDTH(32)
@@ -620,7 +618,7 @@ module top #(
     .wr_clk(clk),
     .wr_addr(bus_addr[31:2]),
     .wr_data(bus_wdata),
-    .wr_en(bus_wen && (bus_addr[31:16] == 16'h1000))
+    .wr_en(bus_wen && (bus_addr[31:16] == 16'h1002))
   );
   // Character Set RAM 128x16x16 (4KB)
   logic [31:0] char_dword;
@@ -631,17 +629,17 @@ module top #(
     .DATA_WIDTH(32)
   ) u_osd_charset_ram (
     .rd_clk(clk_pixel),
-    .rd_addr({screen_char, row[3:1]}),
+    .rd_addr({screen_char[6:0], row[3:1]}),
     .rd_data(char_dword),
     .wr_clk(clk),
     .wr_addr(bus_addr[31:2]),
     .wr_data(bus_wdata),
-    .wr_en(bus_wen && (bus_addr[31:16] == 16'h1001))
+    .wr_en(bus_wen && (bus_addr[31:16] == 16'h1003))
   );
 
   logic [15:0] char_shift;
   always_ff @(posedge clk_pixel) begin
-    if (screen_pos[3:0] == 4'h5) char_shift <= char;
+    if (screen_pos[3:0] == 4'h5) char_shift <= screen_char[7] ? ~char : char;
     else char_shift <= {char_shift[14:0], 1'b0};
   end
 

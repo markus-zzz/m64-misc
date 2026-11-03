@@ -11,6 +11,8 @@
 #include <zephyr/shell/shell.h>
 #include <zephyr/sys/crc.h>
 
+#include "fpga_prg.h"
+
 LOG_MODULE_REGISTER(m64_fpga, LOG_LEVEL_INF);
 
 static const struct gpio_dt_spec fpga_ss_boot_ctrl =
@@ -98,7 +100,7 @@ static inline void fpga_bitbang_byte(uint8_t b) {
  * Expects a raw .bin (write_bitstream -bin_file): no header to skip.
  * Returns 0 on success, negative errno otherwise.
  */
-static int fpga_program_path(const char *binpath) {
+int fpga_program_path(const char *binpath) {
   struct fs_file_t file;
   /* Large buffer so each SD read is a fast contiguous burst; the slow
    * bit-bang then runs with the SD idle. This avoids interleaving many
