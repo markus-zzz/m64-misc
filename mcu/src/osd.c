@@ -5,10 +5,9 @@
 #include <zephyr/shell/shell.h>
 
 #include "fpga_spi.h"
+#include "leds.h"
+#include "menu.h"
 #include "osd.h"
-
-#define OSD_WIDTH 64
-#define ODS_HEIGHT 32
 
 static char osdbuf[2048];
 
@@ -72,3 +71,106 @@ SHELL_SUBCMD_ADD((m64, osd), invert, NULL, "invert <x> <y> <len>", cmd_osd_inver
 SHELL_SUBCMD_ADD((m64, osd), clear, NULL, "clear", cmd_osd_clear, 1, 0);
 SHELL_SUBCMD_ADD((m64, osd), on, NULL, "on", cmd_osd_on, 1, 0);
 SHELL_SUBCMD_ADD((m64, osd), off, NULL, "off", cmd_osd_off, 1, 0);
+
+#include <zephyr/kernel.h>
+#include <zephyr/sys/reboot.h>
+
+#define POLL_STACK_SIZE 1024
+#define POLL_PRIO 5
+
+#define N64_CTRLR_START 0x10000000
+#define N64_CTRLR_A 0x80000000
+#define N64_CTRLR_B 0x40000000
+#define N64_CTRLR_DPAD_UP 0x08000000
+#define N64_CTRLR_DPAD_DOWN 0x04000000
+#define N64_CTRLR_DPAD_LEFT 0x02000000
+#define N64_CTRLR_DPAD_RIGHT 0x01000000
+
+static int osd_active = 0;
+
+static void action_sys_reboot(struct MenuItem *item, void *opaque) { sys_reboot(SYS_REBOOT_COLD); }
+
+static const char *colors_str[] = {"off", "red", "green", "blue", NULL};
+static const uint32_t colors_rgb[] = {0x000000, 0xff0000, 0x00ff00, 0x0000ff};
+
+static void action_led_ctrl(struct MenuItem *item, void *opaque) {
+  uint8_t port = (uint8_t)(long)opaque;
+  uint32_t rgb = colors_rgb[item->opt_idx];
+  leds_set_ctrl(port, rgb);
+}
+static void poll_thread(void *p1, void *p2, void *p3) {
+
+  // Setup basic menu system
+  Menu_t *main_menu = menu_create(NULL, "Main Menu");
+  Menu_t *led_ctrl_menu = menu_create(main_menu, "LED Control Menu");
+
+  // Populate 'Main Menu'
+  MenuItem_t *led_ctrl_item = menu_item_create(main_menu, "LED Control");
+  menu_item_set_action(led_ctrl_item, menu_action_jump_menu, led_ctrl_menu);
+
+  MenuItem_t *item_sys_reboot = menu_item_create(main_menu, "System Reboot");
+  menu_item_set_action(item_sys_reboot, action_sys_reboot, NULL);
+
+  // Populate 'LED Control Menu'
+  MenuItem_t *led_0_item = menu_item_create(led_ctrl_menu, "LED Color Controller Port #0");
+  led_0_item->opt_list = colors_str;
+  menu_item_set_action(led_0_item, action_led_ctrl, (void *)0); // Port #0
+
+  MenuItem_t *led_1_item = menu_item_create(led_ctrl_menu, "LED Color Controller Port #1");
+  led_1_item->opt_list = colors_str;
+  menu_item_set_action(led_1_item, action_led_ctrl, (void *)1); // Port #1
+
+  MenuItem_t *led_2_item = menu_item_create(led_ctrl_menu, "LED Color Controller Port #2");
+  led_2_item->opt_list = colors_str;
+  menu_item_set_action(led_2_item, action_led_ctrl, (void *)2); // Port #2
+
+  MenuItem_t *led_3_item = menu_item_create(led_ctrl_menu, "LED Color Controller Port #3");
+  led_3_item->opt_list = colors_str;
+  menu_item_set_action(led_3_item, action_led_ctrl, (void *)3); // Port #3
+
+  int64_t next = k_uptime_get();
+  uint32_t ctrlr_prev = 0;
+  while (1) {
+    next += 100;
+    k_sleep(K_TIMEOUT_ABS_MS(next)); /* absolute deadline: no drift */
+    /* do the poll here */
+    uint32_t ctrlr_curr;
+    (void)fpga_bus_read32(0x10000104, &ctrlr_curr);
+    if (ctrlr_curr == 0xffffffff)
+      continue; // No ctrlr connected
+
+    uint32_t ctrlr_down_edge = ~ctrlr_prev & ctrlr_curr;
+    uint32_t ctrlr_up_edge = ctrlr_prev & ~ctrlr_curr;
+
+    if (ctrlr_down_edge & N64_CTRLR_START) {
+      osd_active = !osd_active;
+      osd_enable(osd_active);
+    }
+
+    if (osd_active) {
+      if (ctrlr_down_edge & N64_CTRLR_DPAD_UP) {
+        menu_input_up();
+      }
+      if (ctrlr_down_edge & N64_CTRLR_DPAD_DOWN) {
+        menu_input_down();
+      }
+      if (ctrlr_down_edge & N64_CTRLR_A) {
+        menu_input_select();
+      }
+      if (ctrlr_down_edge & N64_CTRLR_B) {
+        menu_input_back();
+      }
+
+      if (ctrlr_up_edge & N64_CTRLR_DPAD_UP) {
+      }
+      if (ctrlr_up_edge & N64_CTRLR_DPAD_DOWN) {
+      }
+      menu_draw();
+    }
+
+    ctrlr_prev = ctrlr_curr;
+  }
+}
+
+K_THREAD_DEFINE(osd_poll_tid, POLL_STACK_SIZE, poll_thread, NULL, NULL, NULL, POLL_PRIO, 0,
+                K_TICKS_FOREVER);

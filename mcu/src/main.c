@@ -300,6 +300,8 @@ SHELL_CMD_REGISTER(m64, &m64_cmds, "M64 specific commands.", NULL);
 
 SHELL_CMD_ARG_REGISTER(source, NULL, "source <path to .sh file>", cmd_source, 2, 0);
 
+extern k_tid_t osd_poll_tid;
+
 int main(void) {
   leds_setup_pins();
   fpga_setup_pins();
@@ -329,10 +331,7 @@ int main(void) {
   /* Load OSD font */
   (void)fpga_bus_write_file(0x10030000, "/SD:/font16x16.bin");
 
-  for (unsigned i = 0; i < 32; i++)
-    osd_printf(i, i, "Hello World OSD!!! %d", i);
-  osd_flush();
-
+  k_wakeup(osd_poll_tid);
   /* Nothing else to do here: the interactive shell runs in its own
    * thread on the USB CDC-ACM console. */
   return 0;

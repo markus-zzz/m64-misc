@@ -86,6 +86,17 @@ module top #(
     end
   end
 
+  logic [31:0] scratch_ram_rdata;
+  always_comb begin
+    casex (bus_addr)
+      32'h1000_0100: bus_rdata = joybus_rdata; // Ctrl #0
+      32'h1000_0104: bus_rdata = joybus_rdata; // Ctrl #1
+      32'h1000_0108: bus_rdata = joybus_rdata; // Ctrl #2
+      32'h1000_010c: bus_rdata = joybus_rdata; // Ctrl #3
+      default: bus_rdata = scratch_ram_rdata;
+    endcase
+  end
+
   // Scratch RAM
   spram #(
       .ADDR_WIDTH(10),
@@ -93,7 +104,7 @@ module top #(
   ) u_scratch_ram (
       .clk (clk),
       .addr(bus_addr[31:2]),
-      .rd_data(bus_rdata),
+      .rd_data(scratch_ram_rdata),
       .wr_data(bus_wdata),
       .wr_en(bus_wen && (bus_addr[31:28] == 4'h3))
   );

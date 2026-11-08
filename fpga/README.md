@@ -37,6 +37,10 @@ Bus register map
 
 | 0x1000_0000 | System ctrl (resets) |
 | 0x1000_0010 | OSD ctrl             |
+| 0x1000_0100 | N64 Ctrlr #0         |
+| 0x1000_0104 | N64 Ctrlr #1         |
+| 0x1000_0108 | N64 Ctrlr #2         |
+| 0x1000_010c | N64 Ctrlr #3         |
 | 0x1001_0000 | RISC-V ROM           |
 | 0x1002_0000 | OSD Screen RAM       |
 | 0x1003_0000 | OSD Char RAM         |

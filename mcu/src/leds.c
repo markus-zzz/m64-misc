@@ -144,4 +144,24 @@ void leds_setup_pins(void) {
   cyccnt_enable();
 }
 
+void leds_set_ctrl(uint8_t port, uint32_t rgb) {
+  uint32_t grb = ((rgb & 0xff00) << 8) | ((rgb & 0xff0000) >> 8) | (rgb & 0xff);
+  switch (port) {
+  case 0:
+    ws2812_send_color(GPIOA, 0, grb); // Controller port #0
+    break;
+  case 1:
+    ws2812_send_color(GPIOB, 3, grb); // Controller port #1
+    break;
+  case 2:
+    ws2812_send_color(GPIOB, 4, grb); // Controller port #2
+    break;
+  case 3:
+    ws2812_send_color(GPIOD, 15, grb); // Controller port #3
+    break;
+  default:
+    break;
+  }
+}
+
 SHELL_SUBCMD_ADD((m64), leds, NULL, "Manipulate LEDs", cmd_m64_leds, 2, 0);

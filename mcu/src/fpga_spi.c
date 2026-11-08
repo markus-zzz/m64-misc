@@ -33,6 +33,8 @@ static OSPI_HandleTypeDef hospi;
 
 #define OSPI_CLOCK_PRESCALER 256U
 
+K_MUTEX_DEFINE(fpga_bus_lock);
+
 void fpga_spi_init(void) {
   int rc;
 
@@ -87,6 +89,7 @@ void fpga_spi_init(void) {
 }
 
 static int fpga_read(uint16_t opcode, uint32_t addr, uint8_t *buf, size_t len) {
+  k_mutex_lock(&fpga_bus_lock, K_FOREVER);
 
   OSPI_RegularCmdTypeDef cmd = {
       .OperationType = HAL_OSPI_OPTYPE_COMMON_CFG,
@@ -108,11 +111,14 @@ static int fpga_read(uint16_t opcode, uint32_t addr, uint8_t *buf, size_t len) {
       .SIOOMode = HAL_OSPI_SIOO_INST_EVERY_CMD,
   };
 
+  int rc = 0;
   HAL_StatusTypeDef hs = HAL_OSPI_Command(&hospi, &cmd, HAL_OSPI_TIMEOUT_DEFAULT_VALUE);
   if (hs != HAL_OK) {
     LOG_ERR("HAL_OSPI_Command failed: hs=%d state=0x%lx err=0x%lx", (int)hs,
             (unsigned long)hospi.State, (unsigned long)hospi.ErrorCode);
-    return -EIO;
+
+    rc = -EIO;
+    goto finish;
   }
   hs = HAL_OSPI_Receive(&hospi, buf, HAL_OSPI_TIMEOUT_DEFAULT_VALUE);
   if (hs != HAL_OK) {
@@ -133,12 +139,16 @@ static int fpga_read(uint16_t opcode, uint32_t addr, uint8_t *buf, size_t len) {
     __HAL_OSPI_CLEAR_FLAG(&hospi, HAL_OSPI_FLAG_TC);
     hospi.State = HAL_OSPI_STATE_READY;
     hospi.ErrorCode = HAL_OSPI_ERROR_NONE;
-    return -EIO;
+    rc = -EIO;
+    goto finish;
   }
-  return 0;
+finish:
+  k_mutex_unlock(&fpga_bus_lock);
+  return rc;
 }
 
 static int fpga_write(uint16_t opcode, uint32_t addr, uint8_t *buf, size_t len) {
+  k_mutex_lock(&fpga_bus_lock, K_FOREVER);
 
   OSPI_RegularCmdTypeDef cmd = {
       .OperationType = HAL_OSPI_OPTYPE_COMMON_CFG,
@@ -160,11 +170,13 @@ static int fpga_write(uint16_t opcode, uint32_t addr, uint8_t *buf, size_t len) 
       .SIOOMode = HAL_OSPI_SIOO_INST_EVERY_CMD,
   };
 
+  int rc = 0;
   HAL_StatusTypeDef hs = HAL_OSPI_Command(&hospi, &cmd, HAL_OSPI_TIMEOUT_DEFAULT_VALUE);
   if (hs != HAL_OK) {
     LOG_ERR("HAL_OSPI_Command failed: hs=%d state=0x%lx err=0x%lx", (int)hs,
             (unsigned long)hospi.State, (unsigned long)hospi.ErrorCode);
-    return -EIO;
+    rc = -EIO;
+    goto finish;
   }
   hs = HAL_OSPI_Transmit(&hospi, buf, HAL_OSPI_TIMEOUT_DEFAULT_VALUE);
   if (hs != HAL_OK) {
@@ -185,24 +197,35 @@ static int fpga_write(uint16_t opcode, uint32_t addr, uint8_t *buf, size_t len) 
     __HAL_OSPI_CLEAR_FLAG(&hospi, HAL_OSPI_FLAG_TC);
     hospi.State = HAL_OSPI_STATE_READY;
     hospi.ErrorCode = HAL_OSPI_ERROR_NONE;
-    return -EIO;
+    rc = -EIO;
+    goto finish;
   }
-  return 0;
+finish:
+  k_mutex_unlock(&fpga_bus_lock);
+  return rc;
 }
 
 int fpga_bus_write(uint32_t addr, uint8_t *buf, size_t len) {
   return fpga_write(0x8000, addr, buf, len);
 }
 
+int fpga_bus_read32(uint32_t addr, uint32_t *data) {
+  int rc = fpga_read(0x0000, addr, (uint8_t *)data, sizeof(*data));
+  if (rc != 0) {
+    return rc;
+  }
+  *data = BSWAP_32(*data);
+
+  return 0;
+}
 static int cmd_fpga_read32(const struct shell *sh, size_t argc, char **argv) {
   uint32_t addr = (uint32_t)strtoul(argv[1], NULL, 0);
   uint32_t data;
-  int rc = fpga_read(0x0000, addr, (uint8_t *)&data, sizeof(data));
+  int rc = fpga_bus_read32(addr, &data);
   if (rc != 0) {
     shell_error(sh, "read failed (%d)", rc);
     return rc;
   }
-  data = BSWAP_32(data);
   shell_print(sh, "addr=0x%08x data=0x%08x", addr, data);
 
   return 0;

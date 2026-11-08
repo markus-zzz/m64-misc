@@ -381,6 +381,8 @@ int main(void) {
     int8_t joy_y = curr_joybus & 0xff;
     uart_print("\rjoybus: 0x%8x x=%2x y=%2x", curr_joybus, joy_x, joy_y);
 
+    if (curr_joybus == 0xffffffff) continue;
+
     pos_x += joy_x << 12;
     pos_x = MAX(0, pos_x);
     pos_x = MIN(pos_x, (1920 - 128 - 1) << 16);
