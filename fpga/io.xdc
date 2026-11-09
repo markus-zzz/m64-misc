@@ -190,10 +190,22 @@ set_max_delay -datapath_only \
 # violations. Declare them mutually asynchronous; the real crossings are
 # already covered by the synchroniser/datapath constraints above and by the
 # bitslice FIFO.
+# freerun_clk (25 MHz) is a fabric-divided clock (freerun_toggle_reg -> BUFG) that
+# clocks the whole GT reset FSM / CPLL calibration / DRP logic. It MUST be
+# declared, otherwise ~1750 GT control endpoints are completely untimed and
+# placement/routing of the GT lock sequence is arbitrary.
+create_generated_clock -name freerun_clk -source [get_ports clk_50mhz] \
+  -divide_by 2 [get_pins freerun_toggle_reg/Q]
+
+# clk_audio (~48 kHz) is a fabric-divided toggle from clk_pixel.
+create_generated_clock -name clk_audio -source [get_pins bufg_pixel/O] \
+  -divide_by 3094 [get_pins clk_audio_r_reg/Q]
+
 set_clock_groups -asynchronous \
-  -group [get_clocks -include_generated_clocks sys_clk_pin] \
+  -group [get_clocks -include_generated_clocks sys_clk_pin -filter {NAME != freerun_clk}] \
   -group [get_clocks -include_generated_clocks clk_pixel_raw] \
-  -group [get_clocks -include_generated_clocks hdmi_mgtrefclk]
+  -group [get_clocks -include_generated_clocks hdmi_mgtrefclk] \
+  -group [get_clocks freerun_clk]
 
 # Defined pull resistors on the PSRAM data/strobe nets. Without these an
 # unresponsive device leaves DQS floating; a floating CMOS input drifts and

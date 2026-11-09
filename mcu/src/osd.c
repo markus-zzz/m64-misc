@@ -75,7 +75,7 @@ SHELL_SUBCMD_ADD((m64, osd), off, NULL, "off", cmd_osd_off, 1, 0);
 #include <zephyr/kernel.h>
 #include <zephyr/sys/reboot.h>
 
-#define POLL_STACK_SIZE 1024
+#define POLL_STACK_SIZE 2048
 #define POLL_PRIO 5
 
 #define N64_CTRLR_START 0x10000000
@@ -98,15 +98,63 @@ static void action_led_ctrl(struct MenuItem *item, void *opaque) {
   uint32_t rgb = colors_rgb[item->opt_idx];
   leds_set_ctrl(port, rgb);
 }
+
+#include <zephyr/fs/fs.h>
+
+struct MenuFileBrowserDesc {
+  const char *basedir;
+  uint32_t bus_addr;
+};
+
+static Menu_t *fs_browse_menu = NULL;
+static void action_fs_browse_open_file(struct MenuItem *item, void *opaque) {
+  struct MenuFileBrowserDesc *desc = (struct MenuFileBrowserDesc *)opaque;
+  char path[64];
+  snprintf(path, sizeof(path), "%s/%s", desc->basedir, item->str);
+  fpga_bus_write_file(desc->bus_addr, path);
+  menu_input_back();
+}
+static void action_fs_browse(struct MenuItem *item, void *opaque) {
+  struct MenuFileBrowserDesc *desc = (struct MenuFileBrowserDesc *)opaque;
+  menu_action_jump_menu(item, fs_browse_menu);
+  menu_item_clear(fs_browse_menu);
+
+  struct fs_dir_t zdp;
+  fs_dir_t_init(&zdp);
+  if (0 == fs_opendir(&zdp, desc->basedir)) {
+    struct fs_dirent entry;
+    while (1) {
+      if (fs_readdir(&zdp, &entry) != 0)
+        break;
+      if (entry.name[0] == 0)
+        break;
+      char *tmp = malloc(strlen(entry.name) + 1); // XXX: Memory leak
+      strcpy(tmp, entry.name);
+      MenuItem_t *fs_item = menu_item_create(fs_browse_menu, tmp);
+      menu_item_set_action(fs_item, action_fs_browse_open_file, opaque);
+    }
+    fs_closedir(&zdp);
+  }
+}
+
 static void poll_thread(void *p1, void *p2, void *p3) {
 
   // Setup basic menu system
   Menu_t *main_menu = menu_create(NULL, "Main Menu");
   Menu_t *led_ctrl_menu = menu_create(main_menu, "LED Control Menu");
+  fs_browse_menu = menu_create(main_menu, "File System Browser");
 
   // Populate 'Main Menu'
   MenuItem_t *led_ctrl_item = menu_item_create(main_menu, "LED Control");
   menu_item_set_action(led_ctrl_item, menu_action_jump_menu, led_ctrl_menu);
+
+  static struct MenuFileBrowserDesc sprite_desc = {.basedir = "/SD:/", .bus_addr = 0x40000000};
+  MenuItem_t *fs_browse_sprite_item = menu_item_create(main_menu, "Load Sprite Data");
+  menu_item_set_action(fs_browse_sprite_item, action_fs_browse, &sprite_desc);
+
+  static struct MenuFileBrowserDesc audio_desc = {.basedir = "/SD:/", .bus_addr = 0x50000000};
+  MenuItem_t *fs_browse_audio_item = menu_item_create(main_menu, "Load Audio Data");
+  menu_item_set_action(fs_browse_audio_item, action_fs_browse, &audio_desc);
 
   MenuItem_t *item_sys_reboot = menu_item_create(main_menu, "System Reboot");
   menu_item_set_action(item_sys_reboot, action_sys_reboot, NULL);

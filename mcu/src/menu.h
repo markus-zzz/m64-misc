@@ -32,6 +32,8 @@ Menu_t *menu_create(Menu_t *parent, const char *title);
 
 MenuItem_t *menu_item_create(Menu_t *menu, const char *str);
 
+void menu_item_clear(Menu_t *menu);
+
 void menu_item_set_action(MenuItem_t *item, void (*action)(struct MenuItem *item, void *opaque),
                           void *opaque);
 

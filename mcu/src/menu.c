@@ -33,6 +33,20 @@ MenuItem_t *menu_item_create(Menu_t *menu, const char *str) {
   return item;
 }
 
+void menu_item_clear(Menu_t *menu) {
+  MenuItem_t *item = menu->first_item;
+
+  while (item) {
+    MenuItem_t *next = item->next;
+    free(item);
+    item = next;
+  }
+
+  menu->first_item = NULL;
+  menu->curr_item = NULL;
+  menu->last_item = NULL;
+}
+
 void menu_item_set_action(MenuItem_t *item, void (*action)(struct MenuItem *item, void *opaque),
                           void *opaque) {
   item->action = action;

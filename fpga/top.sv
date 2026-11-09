@@ -448,6 +448,11 @@ module top #(
   assign rgb_idx_h = image_pos_x - cx;
   assign rgb_data = rgb_array[rgb_array_idx];
 
+  always_ff @(posedge clk) begin
+    if (bus_wen && (bus_addr[31:28] == 4'h4))
+      rgb_array[bus_addr[31:2]] <= bus_wdata;
+  end
+
   always_ff @(posedge clk_pixel) begin
     rgb_array_idx <= {rgb_idx_v, rgb_idx_h};
     rgb <= 24'h0;
@@ -467,19 +472,24 @@ module top #(
     end
   end
 
-  initial begin
-    $readmemh("/tmp/parrot.dat", rgb_array);
-  end
-
   logic [15:0] audio_array [0:16'hffff];
   logic [15:0] audio_idx;
-  initial begin
-    $readmemh("/tmp/boing.dat", audio_array);
+
+  always_ff @(posedge clk) begin
+    if (bus_wen && (bus_addr[31:28] == 4'h5))
+      audio_array[bus_addr[31:2]] <= bus_wdata;
   end
 
+  logic [31:0] joybus_rdata_audio[3];
   always_ff @(posedge clk_audio) begin
+    joybus_rdata_audio[0] <= joybus_rdata;
+    joybus_rdata_audio[1] <= joybus_rdata_audio[0];
+    joybus_rdata_audio[2] <= joybus_rdata_audio[1];
+
     audio_sample_word <= {audio_array[audio_idx], audio_array[audio_idx]};
-    audio_idx <= audio_idx + 1;
+
+    if ((joybus_rdata_audio[1] & ~joybus_rdata_audio[2]) & (1 << 29)) audio_idx <= 0;
+    else if (audio_idx != 16'hffff) audio_idx <= audio_idx + 1;
   end
 
   //
