@@ -23,6 +23,9 @@ uart:~$ m64 fpga write32 0x20000010 0xffffff
 ## Misc
 ```
 $ ffmpeg -i m64-hdmi.mkv -vf scale=-2:720 -c:v libx264 -crf 23 -c:a aac -movflags +faststart m64-hdmi.mp4
+
+$ pactl list | grep MACRO
+$ ffmpeg -f v4l2 -input_format mjpeg -framerate 30 -video_size 1920x1080 -i /dev/video0 -f pulse -ac 2 -ar 48000 -i alsa_input.usb-MACROSILICON_USB3.0_Video_04304933-02.analog-stereo -map 0:v -map 1:a -c:v libx264 -preset veryfast -crf 20 -pix_fmt yuv420p -g 60 -c:a aac -b:a 192k -af aresample=async=1 -movflags +faststart out.mp4
 ```
 
 ## MCU to FPGA SPI protocol

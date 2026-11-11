@@ -31,7 +31,7 @@ static const struct pinctrl_dev_config *ospi_pcfg = PINCTRL_DT_DEV_CONFIG_GET(OS
 
 static OSPI_HandleTypeDef hospi;
 
-#define OSPI_CLOCK_PRESCALER 256U
+#define OSPI_CLOCK_PRESCALER 50U
 
 K_MUTEX_DEFINE(fpga_bus_lock);
 
@@ -103,7 +103,7 @@ static int fpga_read(uint16_t opcode, uint32_t addr, uint8_t *buf, size_t len) {
       .AddressSize = HAL_OSPI_ADDRESS_32_BITS,
       .AddressDtrMode = HAL_OSPI_ADDRESS_DTR_DISABLE,
       .AlternateBytesMode = HAL_OSPI_ALTERNATE_BYTES_NONE,
-      .DataMode = HAL_OSPI_DATA_1_LINE,
+      .DataMode = HAL_OSPI_DATA_4_LINES,
       .DataDtrMode = HAL_OSPI_DATA_DTR_DISABLE,
       .NbData = len,
       .DummyCycles = 8,
@@ -162,7 +162,7 @@ static int fpga_write(uint16_t opcode, uint32_t addr, uint8_t *buf, size_t len) 
       .AddressSize = HAL_OSPI_ADDRESS_32_BITS,
       .AddressDtrMode = HAL_OSPI_ADDRESS_DTR_DISABLE,
       .AlternateBytesMode = HAL_OSPI_ALTERNATE_BYTES_NONE,
-      .DataMode = HAL_OSPI_DATA_1_LINE,
+      .DataMode = HAL_OSPI_DATA_4_LINES,
       .DataDtrMode = HAL_OSPI_DATA_DTR_DISABLE,
       .NbData = len,
       .DummyCycles = 8,

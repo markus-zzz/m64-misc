@@ -226,10 +226,8 @@ zephyr_udc0: &usbotg_hs {
 		 <&rcc STM32_SRC_PLL2_R SDMMC_SEL(1)>;
 	cd-gpios = <&gpioe 15 GPIO_ACTIVE_LOW>;
 	bus-width = <4>;
-	/* Card clock = SDMMCCLK / (2 * clk-div) = 48 MHz / 8 = 6 MHz.
-	 * The card is unreliable at full speed on this layout; 6 MHz is
-	 * stable. Lower clk-div (toward 0) to go faster if margins allow. */
-	clk-div = <4>;
+	/* Card clock = SDMMCCLK / (2 * clk-div) = 48 MHz / 2 = 24 MHz. */
+	clk-div = <1>;
 	disk-name = "SD";
 	status = "okay";
 };

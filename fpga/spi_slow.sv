@@ -12,8 +12,7 @@ module spi_slave (
 	input wire clk,
   input wire spi_cs_n,
   input wire spi_clk,
-  output wire spi_miso,
-  input wire spi_mosi,
+  inout wire [3:0] spi_io,
   output wire [31:0] bus_addr,
   input wire [31:0] bus_rdata,
   output wire [31:0] bus_wdata,
@@ -35,17 +34,18 @@ module spi_slave (
 
     logic [15:0] reg_cmd;
     logic [31:0] reg_addr;
-    logic [32:0] reg_rdata;
+    logic [35:0] reg_rdata;
     logic [31:0] reg_wdata;
 
     logic [2:0] spi_cs_n_sync;
     logic [2:0] spi_clk_sync;
-    logic [2:0] spi_mosi_sync;
+    logic [3:0] spi_io_sync[0:1];
 
     always_ff @(posedge clk) begin
       spi_cs_n_sync <= {spi_cs_n, spi_cs_n_sync[2:1]};
       spi_clk_sync <= {spi_clk, spi_clk_sync[2:1]};
-      spi_mosi_sync <= {spi_mosi, spi_mosi_sync[2:1]};
+      spi_io_sync[0] <= spi_io;
+      spi_io_sync[1] <= spi_io_sync[0];
     end
 
     always_ff @(posedge clk) begin
@@ -64,14 +64,14 @@ module spi_slave (
             cntr <= cntr + 1;
             case (state)
               SPI_CMD: begin
-                reg_cmd <= {reg_cmd[14:0], spi_mosi_sync[1]};
+                reg_cmd <= {reg_cmd[14:0], spi_io_sync[1][0]};
                 if (cntr == 15) begin
                   cntr <= 0;
                   state <= SPI_ADDR;
                 end
               end
               SPI_ADDR: begin
-                reg_addr <= {reg_addr[30:0], spi_mosi_sync[1]};
+                reg_addr <= {reg_addr[30:0], spi_io_sync[1][0]};
                 if (cntr == 31) begin
                   bus_ren <= ~reg_cmd[15];
                   cntr <= 0;
@@ -80,14 +80,14 @@ module spi_slave (
               end
               SPI_DUMMY_0: begin
                 if (cntr == 7) begin
-                  reg_rdata <= {1'b0, bus_rdata};
+                  reg_rdata <= {4'b0000, bus_rdata};
                   cntr <= 0;
                   state <= SPI_DATA;
                 end
               end
               SPI_DATA: begin
-                reg_wdata <= {reg_wdata[30:0], spi_mosi_sync[1]};
-                if (cntr == 31) begin
+                reg_wdata <= {reg_wdata[27:0], spi_io_sync[1]};
+                if (cntr == 7) begin
                   bus_wen <= reg_cmd[15];
                   cntr <= 0;
                   inc_addr <= 1;
@@ -100,7 +100,7 @@ module spi_slave (
         end else if (spi_clk_sync[1:0] == 2'b01) begin
             case (state)
               SPI_DATA: begin
-                reg_rdata <= {reg_rdata[31:0], 1'b0};
+                reg_rdata <= {reg_rdata[31:0], 4'b0000};
               end
             endcase
         end
@@ -108,7 +108,8 @@ module spi_slave (
 
     assign bus_addr = reg_addr;
     assign bus_wdata = reg_wdata;
-    assign spi_miso = reg_rdata[32];
+
+    assign spi_io = (state == SPI_DATA && ~reg_cmd[15]) ? reg_rdata[35:32] : 4'bzzzz;
 
 endmodule
 
