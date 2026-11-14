@@ -187,6 +187,23 @@ static void poll_thread(void *p1, void *p2, void *p3) {
     if (ctrlr_curr == 0xffffffff)
       continue; // No ctrlr connected
 
+    // Handle auto-repeat for navigation keys
+    static uint32_t navigation_keys_prev = 0;
+    static uint64_t navigation_timeout;
+    const uint32_t navigation_mask = 0x0f000000;
+    uint32_t navigation_keys = ctrlr_curr & navigation_mask;
+    uint64_t uptime = k_uptime_get();
+    if (navigation_keys) {
+      if (navigation_keys_prev != navigation_keys) {
+        navigation_timeout = uptime + 600; // initial delay
+      } else if (uptime >= navigation_timeout ) {
+        // Fake a pos-edge
+        ctrlr_prev &= ~navigation_keys;
+        navigation_timeout = uptime + 200; // repeat delay
+      }
+    }
+    navigation_keys_prev = navigation_keys;
+
     uint32_t ctrlr_down_edge = ~ctrlr_prev & ctrlr_curr;
     uint32_t ctrlr_up_edge = ctrlr_prev & ~ctrlr_curr;
 
