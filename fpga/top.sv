@@ -575,11 +575,7 @@ module top #(
     .joybus_io(joybus_1)
   );
 
-  // Be careful to avoid merging 'inout' nets
-  logic joybus_1_ff;
-  always_ff @(posedge clk) joybus_1_ff <= n64_ctrl_data[1];
-
-  assign n64_ctrl_data = {mcu_spi_clk, joybus_1_ff, joybus_1, uart_tx_shift[0]};
+  assign n64_ctrl_data = {2'bzz, joybus_1, uart_tx_shift[0] ? 1'bz : 1'b0};
 
   //
   // On Screen Display (OSD) Overlay 64x32
