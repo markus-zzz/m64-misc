@@ -25,6 +25,7 @@ read_verilog -sv dpram.sv
 read_verilog -sv spram.sv
 read_verilog -sv spi_slow.sv
 read_verilog -sv psram_slow.sv
+read_verilog -sv psram_medium.sv
 read_verilog -sv n64_ctrl.sv
 read_verilog -sv top.sv
 read_verilog -sv utils.sv

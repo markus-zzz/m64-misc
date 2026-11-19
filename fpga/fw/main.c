@@ -318,6 +318,14 @@ void psram_test_array(uint32_t base, uint32_t size) {
 }
 
 int main(void) {
+#if 0
+  volatile uint32_t *addr = (volatile uint32_t *)(0x58000000);
+  (void)*addr;
+  volatile uint32_t *addr_data = (volatile uint32_t *)(0x50001230);
+  *addr_data = 0xbadc0ffe;
+  (void)*addr_data;
+  return 0;
+#endif
 
   // Drive Z on all I2C buses (i.e. let the pull-ups act)
   *R_I2C_SCL = 0xffff;

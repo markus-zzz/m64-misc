@@ -494,9 +494,32 @@ module top #(
   //
   // PSRAMs
   //
-  psram_slow psram_slow_0 (
+  wire psram_mmcm_fb;
+  wire psram_mmcm_locked;
+  wire clk_psram_raw, clk_psram;
+  MMCME4_BASE #(
+    .CLKIN1_PERIOD(20.000),        // 50 MHz
+    .DIVCLK_DIVIDE(1),
+    .CLKFBOUT_MULT_F(24.000),      // VCO = 1200 MHz
+    .CLKOUT0_DIVIDE_F(24.000),     // 50 MHz
+    .CLKOUT0_DUTY_CYCLE(0.5),
+    .CLKOUT0_PHASE(90.0)
+  ) psram_mmcm (
+    .CLKOUT0(clk_psram_raw), .CLKOUT0B(),
+    .CLKOUT1(), .CLKOUT1B(), .CLKOUT2(), .CLKOUT2B(),
+    .CLKOUT3(), .CLKOUT3B(), .CLKOUT4(), .CLKOUT5(), .CLKOUT6(),
+    .CLKFBOUT(psram_mmcm_fb), .CLKFBOUTB(),
+    .LOCKED(psram_mmcm_locked),
+    .CLKIN1(clk_50mhz),
+    .PWRDWN(1'b0), .RST(1'b0),
+    .CLKFBIN(psram_mmcm_fb)
+  );
+  BUFG bufg_psram (.I(clk_psram_raw), .O(clk_psram));
+
+  psram_medium psram_medium_0 (
     .clk(clk),
-    .rst(rst),
+    .rst(rst | ~psram_mmcm_locked),
+    .clk_90deg(clk_psram),
     // ---- BUS interface ----
     .bus_addr(cpu_mem_addr),
     .bus_wdata(cpu_mem_wdata),
@@ -512,7 +535,7 @@ module top #(
   );
   psram_slow psram_slow_1 (
     .clk(clk),
-    .rst(rst),
+    .rst(rst | ~psram_mmcm_locked),
     // ---- BUS interface ----
     .bus_addr(cpu_mem_addr),
     .bus_wdata(cpu_mem_wdata),
@@ -528,7 +551,7 @@ module top #(
   );
   psram_slow psram_slow_2 (
     .clk(clk),
-    .rst(rst),
+    .rst(rst | ~psram_mmcm_locked),
     // ---- BUS interface ----
     .bus_addr(cpu_mem_addr),
     .bus_wdata(cpu_mem_wdata),
@@ -544,7 +567,7 @@ module top #(
   );
   psram_slow psram_slow_3 (
     .clk(clk),
-    .rst(rst),
+    .rst(rst | ~psram_mmcm_locked),
     // ---- BUS interface ----
     .bus_addr(cpu_mem_addr),
     .bus_wdata(cpu_mem_wdata),
