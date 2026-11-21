@@ -26,10 +26,10 @@ module psram_model(
 
   // bidir DQ / DQS modelled with tri-state nets
   logic        dev_drive = 1'b0;
-  logic [7:0]  dev_dq = 8'h00;
-  logic        dev_dqs = 1'b0;
-  assign ps_dq  = dev_drive ? dev_dq  : 8'bz;
-  assign ps_dqs = dev_drive ? dev_dqs : 1'bz;
+  logic [15:0]  dev_dq = 16'h0000;
+  logic  [1:0]  dev_dqs = 2'b00;
+  assign ps_dq  = dev_drive ? dev_dq  : 16'bz;
+  assign ps_dqs = dev_drive ? dev_dqs : 2'bz;
 
   logic [7:0]  frame [0:5];
 
@@ -37,7 +37,7 @@ module psram_model(
   // PSRAM3: MR0=0x08 MR1=0x8d MR2=0xde MR3=0xa0 MR4=0x40 MR8=0x05
   logic [7:0]  mode_regs [0:8];
   integer mode_adjs [0:8];
-  logic [7:0] mem_array [0:32*1024*1024-1];
+  logic [15:0] mem_array [0:32*1024*1024-1];
   initial begin
     mode_regs = '{8'h08, 8'h8d, 8'hdf, 8'ha0, 8'h40, 8'hxx, 8'hxx, 8'hxx, 8'h05};
     mode_adjs = '{1,2,3,4,8,5,6,7,0};
@@ -87,18 +87,18 @@ module psram_model(
         // read latency
         repeat (LAT - 1) @(negedge ps_clk);
         // drive data: alternate addressed register and the next (MR1/MR2...)
-        dev_drive = 1'b1; dev_dqs = 1'b0; // XXX:TODO: dqs should drop almost immediately after command
+        dev_drive = 1'b1; dev_dqs = 2'b00; // XXX:TODO: dqs should drop almost immediately after command
         # (ps_clk_half_period/2); // XXX: tDQSCK
         fork
           begin : datarun
             forever begin
-              dev_dq  = mode_regs[ma]; dev_dqs = 1'b1; # (ps_clk_half_period);
-              dev_dq  = mode_regs[mode_adjs[ma]]; dev_dqs = 1'b0; # (ps_clk_half_period);
+              dev_dq  = mode_regs[ma]; dev_dqs = 2'b11; # (ps_clk_half_period);
+              dev_dq  = mode_regs[mode_adjs[ma]]; dev_dqs = 2'b00; # (ps_clk_half_period);
             end
           end
           begin @(posedge ps_cen); disable datarun; end
         join
-        dev_drive = 1'b0; dev_dqs = 1'b0;
+        dev_drive = 1'b0; dev_dqs = 2'b00;
       end
       8'h80: begin // Sync Write
         logic [31:0] addr;
@@ -125,7 +125,7 @@ module psram_model(
         // read latency
         repeat (LAT - 1) @(negedge ps_clk);
         // drive data
-        dev_drive = 1'b1; dev_dqs = 1'b0; // XXX:TODO: dqs should drop almost immediately after command
+        dev_drive = 1'b1; dev_dqs = 2'b00; // XXX:TODO: dqs should drop almost immediately after command
         # (ps_clk_half_period/2); // XXX: tDQSCK
         fork
           begin : datarun
@@ -137,7 +137,7 @@ module psram_model(
           end
           begin @(posedge ps_cen); disable datarun; end
         join
-        dev_drive = 1'b0; dev_dqs = 1'b0;
+        dev_drive = 1'b0; dev_dqs = 2'b00;
       end
       default: begin
         $display(" [%m]: UNKNOWN COMMAND %h", frame[0]);

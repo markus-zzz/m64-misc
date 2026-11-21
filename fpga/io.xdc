@@ -207,23 +207,6 @@ set_clock_groups -asynchronous \
   -group [get_clocks -include_generated_clocks hdmi_mgtrefclk] \
   -group [get_clocks freerun_clk]
 
-# Defined pull resistors on the PSRAM data/strobe nets. Without these an
-# unresponsive device leaves DQS floating; a floating CMOS input drifts and
-# oscillates on noise, which the 400 MHz PHY happily digitises as a bogus
-# strobe. That made "device silent" indistinguishable from "device returned
-# garbage" during bring-up. With a pulldown, silence reads as silence.
-set_property PULLTYPE PULLDOWN [get_ports {ps0_dqs[0]}]
-set_property PULLTYPE PULLDOWN [get_ports {ps0_dq[*]}]
-
-set_property PULLTYPE PULLDOWN [get_ports {ps1_dqs[0]}]
-set_property PULLTYPE PULLDOWN [get_ports {ps1_dq[*]}]
-
-set_property PULLTYPE PULLDOWN [get_ports {ps2_dqs[0]}]
-set_property PULLTYPE PULLDOWN [get_ports {ps2_dq[*]}]
-
-set_property PULLTYPE PULLDOWN [get_ports {ps3_dqs[0]}]
-set_property PULLTYPE PULLDOWN [get_ports {ps3_dq[*]}]
-
 # Output slew/drive for the PSRAM interface. These were left at the LVCMOS18
 # default of SLEW SLOW, which is intended for low-speed general-purpose IO and
 # is not appropriate for a 200 MHz CK / 400 Mb/s DDR data bus - the edges are

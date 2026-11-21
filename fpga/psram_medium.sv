@@ -16,8 +16,8 @@ module psram_medium (
   // ---- PSRAM pins ----
   output logic       ps_clk,
   output logic       ps_cen,
-  inout  wire [7:0]  ps_dq,
-  inout  wire        ps_dqs
+  inout  wire [15:0] ps_dq,
+  inout  wire  [1:0] ps_dqs
 );
 
   logic       ps_cen_;
@@ -57,8 +57,8 @@ module psram_medium (
   //
   // TX-path
   //
-  logic [7:0] tx_shift [0:7]; // XXX: Make this array a type
-  logic [7:0] tx_load [0:7];
+  logic [15:0] tx_shift [0:7]; // XXX: Make this array a type
+  logic [15:0] tx_load [0:7];
   logic       tx_load_en;
   always_ff @(posedge clk) begin
     if (tx_load_en) begin
@@ -68,8 +68,8 @@ module psram_medium (
         tx_shift[i*2+0] <= tx_shift[(i+1)*2+0];
         tx_shift[i*2+1] <= tx_shift[(i+1)*2+1];
       end
-      tx_shift[6] <= 8'h00;
-      tx_shift[7] <= 8'h00;
+      tx_shift[6] <= 16'h0000;
+      tx_shift[7] <= 16'h0000;
     end
   end
 
@@ -84,13 +84,13 @@ module psram_medium (
     else if (frame_cntr == frame_rx_on) rx_on <= 1;
   end
 
-  wire [7:0] dq_tri, dq_out, dq_in;
+  wire [15:0] dq_tri, dq_out, dq_in;
   wire oddr_sr;
   assign oddr_sr = 1'b0;
 
   genvar gi;
   generate
-    for (gi = 0; gi < 8; gi = gi + 1) begin : oddr_dq
+    for (gi = 0; gi < 16; gi = gi + 1) begin
       ODDRE1 oddr_dq_tri (
         .C(clk),
         .D1(~tx_on),
@@ -108,44 +108,50 @@ module psram_medium (
     end
   endgenerate
 
-  wire dqs_tri, dqs_out, dqs_in;
-  ODDRE1 oddr_dqs_tri (
-    .C(clk),
-    .D1(~tx_on),
-    .D2(~tx_on),
-    .Q(dqs_tri),
-    .SR(oddr_sr)
-  );
-  ODDRE1 oddr_dqs (
-    .C(clk),
-    .D1(1'b0),
-    .D2(1'b0),
-    .Q(dqs_out),
-    .SR(oddr_sr)
-  );
+  wire [1:0] dqs_tri, dqs_out, dqs_in;
+  generate
+    for (gi = 0; gi < 2; gi = gi + 1) begin
+      ODDRE1 oddr_dqs_tri (
+        .C(clk),
+        .D1(~tx_on),
+        .D2(~tx_on),
+        .Q(dqs_tri[gi]),
+        .SR(oddr_sr)
+      );
+      ODDRE1 oddr_dqs (
+        .C(clk),
+        .D1(1'b0),
+        .D2(1'b0),
+        .Q(dqs_out[gi]),
+        .SR(oddr_sr)
+      );
+    end
+  endgenerate
 
   //
   // RX-path
   //
-  wire iddr_dqs_q1;
-  wire iddr_dqs_q2;
+  wire [1:0] iddr_dqs_q1, iddr_dqs_q2;
 
-  IDDRE1 #(
-    .IS_C_INVERTED(0),
-    .IS_CB_INVERTED(1)
-  ) iddr_dqs (
-    .C(clk),
-    .CB(clk),
-    .D(dqs_in),
-    .Q1(iddr_dqs_q1),
-    .Q2(iddr_dqs_q2),
-    .R(1'b0)
-  );
-
-  wire [7:0] iddr_dq_q1;
-  wire [7:0] iddr_dq_q2;
   generate
-    for (gi = 0; gi < 8; gi = gi + 1) begin : iddr_dq
+    for (gi = 0; gi < 2; gi = gi + 1) begin
+      IDDRE1 #(
+        .IS_C_INVERTED(0),
+        .IS_CB_INVERTED(1)
+      ) iddr_dqs (
+        .C(clk),
+        .CB(clk),
+        .D(dqs_in[gi]),
+        .Q1(iddr_dqs_q1[gi]),
+        .Q2(iddr_dqs_q2[gi]),
+        .R(1'b0)
+      );
+    end
+  endgenerate
+
+  wire [15:0] iddr_dq_q1, iddr_dq_q2;
+  generate
+    for (gi = 0; gi < 16; gi = gi + 1) begin
       IDDRE1 #(
         .IS_C_INVERTED(0),
         .IS_CB_INVERTED(1)
@@ -164,7 +170,7 @@ module psram_medium (
   // IOBUF
   //
   generate
-    for (gi = 0; gi < 8; gi = gi + 1) begin
+    for (gi = 0; gi < 16; gi = gi + 1) begin
       IOBUF iobuft_dq (
         .O(dq_in[gi]),
         .T(dq_tri[gi]),
@@ -174,21 +180,25 @@ module psram_medium (
     end
   endgenerate
 
-  IOBUF iobuft_dqs (
-    .O(dqs_in),
-    .T(dqs_tri),
-    .I(dqs_out),
-    .IO(ps_dqs)
-  );
+  generate
+    for (gi = 0; gi < 2; gi = gi + 1) begin
+      IOBUF iobuft_dqs (
+        .O(dqs_in[gi]),
+        .T(dqs_tri[gi]),
+        .I(dqs_out[gi]),
+        .IO(ps_dqs[gi])
+      );
+    end
+  endgenerate
 
 
-  localparam RX_SHIFT_LEN = 10;
-  logic [7:0] rx_shift [0:RX_SHIFT_LEN-1];
+  localparam RX_SHIFT_LEN = 6;
+  logic [15:0] rx_shift [0:RX_SHIFT_LEN-1];
   logic [3:0] rx_cntr;
   always_ff @(posedge clk) begin
     if (~rx_on) begin
       rx_cntr <= 0;
-    end else if (~ps_cen_ & (iddr_dqs_q1 ^ iddr_dqs_q2)) begin
+    end else if (~ps_cen_ & (iddr_dqs_q1[0] ^ iddr_dqs_q2[0])) begin
       for (integer i = 0; i < RX_SHIFT_LEN/2 - 1; i = i + 1) begin
         rx_shift[i*2+0] <= rx_shift[(i+1)*2+0];
         rx_shift[i*2+1] <= rx_shift[(i+1)*2+1];
@@ -198,6 +208,18 @@ module psram_medium (
       rx_cntr <= rx_cntr + 1;
     end
   end
+
+  // The four address bytes are constructed as follows according to datasheet.
+  // Also note that we are addressing 16-bit words in x16 mode.
+  logic [31:0] array_addr;
+  // A3 = 7'bx, RA[13] {unused address bits are reserved}
+  assign array_addr[31:24] = {6'b0, bus_addr[25:24]};
+  // A2 = RA[12:5]
+  assign array_addr[23:16] = bus_addr[23:16];
+  // A1 = RA[4:0],CA[10:8] { CA[10] is used only in X8 mode}
+  assign array_addr[15:8] = {bus_addr[15:11], 1'b0, bus_addr[10:9]};
+  // A0 = CA[7:0]
+  assign array_addr[7:0] = bus_addr[8:1];
 
   typedef enum logic [3:0] {
     S_INIT, S_GRST0, S_GRST1, S_IDLE, S_MODE_READ0, S_MODE_READ1,
@@ -229,12 +251,14 @@ module psram_medium (
         frame_start_valid = 1;
         tx_load_en = 1;
         tx_load = '{8'hff, 8'hff, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00};
-        frame_tx_off_ = 8;
+        frame_tx_off_ = 3;
         next_state = S_GRST1;
       end
       S_GRST1: begin
-        if (frame_cntr == 8) frame_stop_valid = 1;
-        if (frame_stop_valid) next_state = S_WAIT;
+        if (frame_cntr == 3) begin
+          frame_stop_valid = 1;
+          next_state = S_WAIT;
+        end
       end
       S_IDLE: begin
         if (bus_valid) begin
@@ -252,13 +276,15 @@ module psram_medium (
         frame_start_valid = 1;
         tx_load_en = 1;
         tx_load = '{8'h40, 8'h40, 8'h00, 8'h00, 8'h00, bus_addr[15:8], 8'h00, 8'h00};
-        frame_tx_off_ = 6;
-        frame_rx_on_ = 10;
+        frame_tx_off_ = 3;
+        frame_rx_on_ = 6;
         next_state = S_MODE_READ1;
       end
       S_MODE_READ1: begin
-        if (rx_cntr == 4) frame_stop_valid = 1;
-        if (frame_stop_valid) next_state = S_ACK;
+        if (rx_cntr == 2) begin
+          frame_stop_valid = 1;
+          next_state = S_ACK;
+        end
       end
       //
       // Mode Write
@@ -267,13 +293,14 @@ module psram_medium (
         frame_start_valid = 1;
         tx_load_en = 1;
         tx_load = '{8'hC0, 8'hC0, 8'h00, 8'h00, 8'h00, bus_addr[15:8], bus_wdata[7:0], 8'h00};
-        frame_tx_off_ = 7;
-        frame_rx_on_ = 10;
+        frame_tx_off_ = 3;
         next_state = S_MODE_WRITE1;
       end
       S_MODE_WRITE1: begin
-        if (frame_cntr == 8) frame_stop_valid = 1;
-        if (frame_stop_valid) next_state = S_ACK;
+        if (frame_cntr == 3) begin
+          frame_stop_valid = 1;
+          next_state = S_ACK;
+        end
       end
       //
       // Sync Read
@@ -281,35 +308,39 @@ module psram_medium (
       S_SYNC_READ0: begin
         frame_start_valid = 1;
         tx_load_en = 1;
-        tx_load = '{8'h00, 8'h00, bus_addr[26:24], bus_addr[23:16], bus_addr[15:8], bus_addr[7:0], 8'h00, 8'h00};
+        tx_load = '{8'h00, 8'h00, array_addr[31:24], array_addr[23:16], array_addr[15:8], array_addr[7:0], 8'h00, 8'h00};
         frame_tx_off_ = 3;
         frame_rx_on_ = 6;
         next_state = S_SYNC_READ1;
       end
       S_SYNC_READ1: begin
-        if (rx_cntr == 4) frame_stop_valid = 1;
-        if (frame_stop_valid) next_state = S_ACK;
+        if (rx_cntr == 2) begin
+          frame_stop_valid = 1;
+          next_state = S_ACK;
+        end
       end
       //
       // Sync Write
       //
       S_SYNC_WRITE0: begin
         frame_start_valid = 1;
-        frame_tx_off_ = 8;
+        frame_tx_off_ = 7;
         tx_load_en = 1;
-        tx_load = '{8'h80, 8'h80, bus_addr[26:24], bus_addr[23:16], bus_addr[15:8], bus_addr[7:0], 8'h00, 8'h00};
+        tx_load = '{8'h80, 8'h80, array_addr[31:24], array_addr[23:16], array_addr[15:8], array_addr[7:0], 8'h00, 8'h00};
         next_state = S_SYNC_WRITE1;
       end
       S_SYNC_WRITE1: begin
         if (frame_cntr == 6) begin
           tx_load_en = 1;
-          tx_load = '{bus_wdata[31:24], bus_wdata[23:16], bus_wdata[15:8], bus_wdata[7:0], 8'h00, 8'h00, 8'h00, 8'h00};
+          tx_load = '{bus_wdata[31:16], bus_wdata[15:0], 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00};
           next_state = S_SYNC_WRITE2;
         end
       end
       S_SYNC_WRITE2: begin
-        if (frame_cntr == 8) frame_stop_valid = 1;
-        if (frame_stop_valid) next_state = S_ACK;
+        if (frame_cntr == 7) begin
+          frame_stop_valid = 1;
+          next_state = S_ACK;
+        end
       end
       S_ACK: begin
         bus_ack = 1;
@@ -321,7 +352,7 @@ module psram_medium (
     endcase
   end
 
-  assign bus_rdata = {rx_shift[0], rx_shift[1], rx_shift[2], rx_shift[3]};
+  assign bus_rdata = {rx_shift[0], rx_shift[1]};
 
 endmodule
 

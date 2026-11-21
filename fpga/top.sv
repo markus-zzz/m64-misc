@@ -530,12 +530,13 @@ module top #(
     // ---- PSRAM pins ----
     .ps_clk(ps0_clk),
     .ps_cen(ps0_cen),
-    .ps_dq(ps0_dq[7:0]),
-    .ps_dqs(ps0_dqs[0])
+    .ps_dq(ps0_dq),
+    .ps_dqs(ps0_dqs)
   );
-  psram_slow psram_slow_1 (
+  psram_medium psram_medium_1 (
     .clk(clk),
     .rst(rst | ~psram_mmcm_locked),
+    .clk_90deg(clk_psram),
     // ---- BUS interface ----
     .bus_addr(cpu_mem_addr),
     .bus_wdata(cpu_mem_wdata),
@@ -546,12 +547,13 @@ module top #(
     // ---- PSRAM pins ----
     .ps_clk(ps1_clk),
     .ps_cen(ps1_cen),
-    .ps_dq(ps1_dq[7:0]),
-    .ps_dqs(ps1_dqs[0])
+    .ps_dq(ps1_dq),
+    .ps_dqs(ps1_dqs)
   );
-  psram_slow psram_slow_2 (
+  psram_medium psram_medium_2 (
     .clk(clk),
     .rst(rst | ~psram_mmcm_locked),
+    .clk_90deg(clk_psram),
     // ---- BUS interface ----
     .bus_addr(cpu_mem_addr),
     .bus_wdata(cpu_mem_wdata),
@@ -562,12 +564,13 @@ module top #(
     // ---- PSRAM pins ----
     .ps_clk(ps2_clk),
     .ps_cen(ps2_cen),
-    .ps_dq(ps2_dq[7:0]),
-    .ps_dqs(ps2_dqs[0])
+    .ps_dq(ps2_dq),
+    .ps_dqs(ps2_dqs)
   );
-  psram_slow psram_slow_3 (
+  psram_medium psram_medium_3 (
     .clk(clk),
     .rst(rst | ~psram_mmcm_locked),
+    .clk_90deg(clk_psram),
     // ---- BUS interface ----
     .bus_addr(cpu_mem_addr),
     .bus_wdata(cpu_mem_wdata),
@@ -578,8 +581,8 @@ module top #(
     // ---- PSRAM pins ----
     .ps_clk(ps3_clk),
     .ps_cen(ps3_cen),
-    .ps_dq(ps3_dq[7:0]),
-    .ps_dqs(ps3_dqs[0])
+    .ps_dq(ps3_dq),
+    .ps_dqs(ps3_dqs)
   );
 
   //

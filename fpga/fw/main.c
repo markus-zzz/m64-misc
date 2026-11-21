@@ -284,7 +284,7 @@ void psram_dump_mode_regs() {
       unsigned mr_idx = mr_idxs[i];
       volatile uint32_t *addr =
           (volatile uint32_t *)(0x58000000 + 0x10000000 * ps_idx + 0x100 * mr_idx);
-      uart_print_raw(" MR%1x=0x%2x", mr_idx, *addr >> 24);
+      uart_print_raw(" MR%1x=0x%2x", mr_idx, *addr >> 16);
     }
     uart_print("");
   }
@@ -319,8 +319,10 @@ void psram_test_array(uint32_t base, uint32_t size) {
 
 int main(void) {
 #if 0
-  volatile uint32_t *addr = (volatile uint32_t *)(0x58000000);
+  // XXX: PSRAM test-snippet for use with simulation
+  volatile uint32_t *addr = (volatile uint32_t *)(0x58000100);
   (void)*addr;
+  *addr = 0x23;
   volatile uint32_t *addr_data = (volatile uint32_t *)(0x50001230);
   *addr_data = 0xbadc0ffe;
   (void)*addr_data;
@@ -368,6 +370,14 @@ int main(void) {
   } while ((gt_status & 0x7) != 0x7);
   uart_print("GT locked and ready");
   hdmi_dump_snk_edid();
+
+  // Enable x16 mode for all four PSRAMs
+  for (unsigned i = 0; i < 4; i++) {
+    volatile uint32_t *psram_mr8 = (volatile uint32_t *)(0x58000800 + i * 0x10000000);
+    uint8_t mr8 = (*psram_mr8) >> 16;
+    mr8 |= 0x40;
+    *psram_mr8 = mr8;
+  }
 
   psram_dump_mode_regs();
 
